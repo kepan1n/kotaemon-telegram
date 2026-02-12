@@ -1,0 +1,10 @@
+python-telegram-bot==21.10
+gradio_client==1.13.3
+beautifulsoup4==4.12.3
+python-dotenv==1.0.1
+plotly==6.0.0
+kaleido==0.2.1
+Pillow==11.1.0
+PyMuPDF==1.26.3
+requests==2.32.5
+playwright==1.51.0

@@ -1,0 +1,27 @@
+[Unit]
+Description=Kotaemon Telegram Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/kotaemon-telegram-bridge
+EnvironmentFile=/opt/kotaemon-telegram-bridge/.env
+Environment=HF_HOME=/opt/kotaemon-telegram-bridge/.hf
+Environment=HF_HUB_CACHE=/opt/kotaemon-telegram-bridge/.hf/hub
+Environment=HF_HUB_DISABLE_IMPLICIT_TOKEN=1
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/kotaemon-telegram-bridge/.pw-browsers
+ExecStart=/opt/kotaemon-telegram-bridge/.venv/bin/python /opt/kotaemon-telegram-bridge/bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/kotaemon-telegram-bridge
+
+[Install]
+WantedBy=multi-user.target
