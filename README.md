@@ -4,6 +4,7 @@
 [![Русский](https://img.shields.io/badge/README-Русский-brightgreen)](README_RU.md)
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)](https://www.python.org/)
+[![Vibecoded with Codex 5.3](https://img.shields.io/badge/Vibecoded%20with-Codex%205.3-7c3aed)](https://openai.com)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/kepan1n/kotaemon-telegram?style=flat)](https://github.com/kepan1n/kotaemon-telegram/stargazers)
 [![Issues](https://img.shields.io/github/issues/kepan1n/kotaemon-telegram)](https://github.com/kepan1n/kotaemon-telegram/issues)
