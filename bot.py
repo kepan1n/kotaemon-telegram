@@ -1569,12 +1569,15 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
             log.info("sources_cmd local_build sid=%s ok=%s pages=%s out=%s", sid, okp, np, limited)
             if okp:
-                await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in cited_pages)}")
-                ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                pages_txt = ', '.join(str(x) for x in cited_pages)
+                src_name = Path(target_item.get("source", "")).name or f"{sid}.pdf"
+                cap = f"{src_name} | стр.: {pages_txt}"
+                await update.message.reply_text(f"Страницы PDF: {pages_txt}")
+                ok_send = await send_document_retry(update.message, limited, caption=cap)
                 if ok_send:
                     return
                 await update.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
-                schedule_background_pdf_send(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                schedule_background_pdf_send(update.message, limited, caption=cap)
                 return
             return await update.message.reply_text("Не удалось собрать локальный единый PDF из страниц цитат. Запусти /ingest <file_id> заново.")
 
@@ -1847,12 +1850,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
                 log.info("act:src local_build sid=%s ok=%s pages=%s out=%s", sid, okp, np, limited)
                 if okp:
-                    await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in cited_pages)}")
-                    ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                    pages_txt = ', '.join(str(x) for x in cited_pages)
+                    src_name = Path(target_item.get("source", "")).name or f"{sid}.pdf"
+                    cap = f"{src_name} | стр.: {pages_txt}"
+                    await q.message.reply_text(f"Страницы PDF: {pages_txt}")
+                    ok_send = await send_document_retry(q.message, limited, caption=cap)
                     if ok_send:
                         return
                     await q.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
-                    schedule_background_pdf_send(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                    schedule_background_pdf_send(q.message, limited, caption=cap)
                     return
                 return await q.message.reply_text("Не удалось собрать локальный единый PDF из страниц цитат. Запусти /ingest <file_id> заново.")
 
