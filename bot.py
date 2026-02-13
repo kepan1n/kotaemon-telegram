@@ -1490,6 +1490,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
                 schedule_background_pdf_send(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                 return
+            return await update.message.reply_text("Не удалось собрать локальный единый PDF из страниц цитат. Запусти /ingest <file_id> заново.")
 
     if selected_ids and not matched_local:
         return await update.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
@@ -1757,6 +1758,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await q.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
                     schedule_background_pdf_send(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                     return
+                return await q.message.reply_text("Не удалось собрать локальный единый PDF из страниц цитат. Запусти /ingest <file_id> заново.")
 
         if selected_ids and not matched_local:
             return await q.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
