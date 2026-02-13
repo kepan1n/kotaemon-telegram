@@ -479,6 +479,21 @@ def cited_pages_from_html(html: str, max_pages: int = 10) -> list[int]:
     return pages[:max_pages]
 
 
+def cited_pages_for_item(st: dict[str, Any], target_item: dict[str, Any], base_url: str, max_pages: int = 10) -> list[int]:
+    pages = cited_pages_from_html(st.get("last_retrieval_html", ""), max_pages=max_pages)
+    if pages:
+        return pages
+
+    # fallback parser from saved targets (src,page)
+    aliases = [str(x).strip().lower() for x in target_item.get("aliases", [])]
+    from_targets: list[int] = []
+    for src, pg in targets_from_state(st, base_url):
+        ssrc = str(src).lower()
+        if any(a and a in ssrc for a in aliases):
+            from_targets.append(int(pg))
+    return sorted(set(from_targets))[:max_pages]
+
+
 def targets_from_state(st: dict[str, Any], base_url: str) -> list[tuple[str, int]]:
     raw = st.get("last_pdf_targets") or []
     out: list[tuple[str, int]] = []
@@ -1445,9 +1460,8 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
     # Fast path: send one local PDF built from cited pages
-    cited_pages = cited_pages_from_html(st.get("last_retrieval_html", ""), max_pages=10)
+    idx = load_storage_index().get("items", {})
     for sid in st.get("selected_files", []):
-        idx = load_storage_index().get("items", {})
         target_item = None
         needle = str(sid).strip().lower()
         for _, item in idx.items():
@@ -1455,7 +1469,10 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if needle in aliases:
                 target_item = item
                 break
-        if target_item and cited_pages:
+        if target_item:
+            cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
+            if not cited_pages:
+                return await update.message.reply_text("Не нашёл страницы цитат для выбранного файла. Сначала задай вопрос по нему.")
             pages_dir = Path(target_item.get("pdf_pages_dir", ""))
             limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
             okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
@@ -1701,9 +1718,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
-        cited_pages = cited_pages_from_html(st.get("last_retrieval_html", ""), max_pages=10)
+        idx = load_storage_index().get("items", {})
         for sid in st.get("selected_files", []):
-            idx = load_storage_index().get("items", {})
             target_item = None
             needle = str(sid).strip().lower()
             for _, item in idx.items():
@@ -1711,7 +1727,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if needle in aliases:
                     target_item = item
                     break
-            if target_item and cited_pages:
+            if target_item:
+                cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
+                if not cited_pages:
+                    return await q.message.reply_text("Не нашёл страницы цитат для выбранного файла. Сначала задай вопрос по нему.")
                 pages_dir = Path(target_item.get("pdf_pages_dir", ""))
                 limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
                 okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
