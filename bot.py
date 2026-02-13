@@ -1468,12 +1468,16 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     matched_local = False
     for sid in selected_ids:
         target_item = None
-        needle = str(sid).strip().lower()
-        for _, item in idx.items():
-            aliases = [str(x).strip().lower() for x in item.get("aliases", [])]
-            if needle in aliases:
-                target_item = item
-                break
+        needle = str(sid).replace("\u200b", "").strip().lower()
+        # direct key match first
+        if needle in idx:
+            target_item = idx.get(needle)
+        else:
+            for _, item in idx.items():
+                aliases = [str(x).replace("\u200b", "").strip().lower() for x in item.get("aliases", [])]
+                if needle in aliases:
+                    target_item = item
+                    break
         if target_item:
             matched_local = True
             cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
@@ -1736,12 +1740,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         matched_local = False
         for sid in selected_ids:
             target_item = None
-            needle = str(sid).strip().lower()
-            for _, item in idx.items():
-                aliases = [str(x).strip().lower() for x in item.get("aliases", [])]
-                if needle in aliases:
-                    target_item = item
-                    break
+            needle = str(sid).replace("\u200b", "").strip().lower()
+            if needle in idx:
+                target_item = idx.get(needle)
+            else:
+                for _, item in idx.items():
+                    aliases = [str(x).replace("\u200b", "").strip().lower() for x in item.get("aliases", [])]
+                    if needle in aliases:
+                        target_item = item
+                        break
             if target_item:
                 matched_local = True
                 cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
