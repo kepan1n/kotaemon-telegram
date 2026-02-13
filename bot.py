@@ -1899,28 +1899,39 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for sid in selected_ids:
             target_item = None
             needle = str(sid).replace("\u200b", "").strip().lower()
+            log.info("act:collage check sid=%s needle=%s", sid, needle)
             if needle in idx:
                 target_item = idx.get(needle)
+                log.info("act:collage direct key match sid=%s", sid)
             else:
-                for _, item in idx.items():
+                for key, item in idx.items():
                     aliases = [str(x).replace("\u200b", "").strip().lower() for x in item.get("aliases", [])]
                     if needle in aliases:
                         target_item = item
+                        log.info("act:collage alias match sid=%s key=%s", sid, key)
                         break
             if not target_item:
+                log.info("act:collage no match sid=%s", sid)
                 continue
 
             pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
+            log.info("act:collage pages sid=%s pages=%s", sid, pages)
             if not pages:
                 return await q.message.reply_text("Не нашёл страницы цитат для коллажа.")
             png_dir = Path(target_item.get("png_pages_dir", ""))
             pngs = [png_dir / f"page-{p:04d}.png" for p in pages]
+            missing = [str(p) for p in pngs if not p.exists()]
+            if missing:
+                log.warning("act:collage missing png sid=%s count=%s first=%s", sid, len(missing), missing[0])
             collage = Path("./out") / f"collage_{update.effective_user.id}_{storage_key(str(sid))}.png"
             okc, n = build_png_collage(pngs, collage, cols=3, max_images=10)
+            log.info("act:collage build sid=%s ok=%s count=%s out=%s", sid, okc, n, collage)
             if not okc:
                 return await q.message.reply_text("Не удалось собрать коллаж PNG.")
 
             try:
+                size = collage.stat().st_size if collage.exists() else -1
+                log.info("act:collage send sid=%s path=%s size=%s", sid, collage, size)
                 with collage.open("rb") as f:
                     await q.message.reply_photo(
                         photo=f,
@@ -1930,8 +1941,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         connect_timeout=30,
                         pool_timeout=30,
                     )
+                log.info("act:collage send success sid=%s", sid)
             except Exception as e:
-                log.exception("act:collage send failed: %s", e)
+                log.exception("act:collage send failed sid=%s err=%s", sid, e)
                 return await q.message.reply_text("Не удалось отправить коллаж (таймаут).")
             return
 
