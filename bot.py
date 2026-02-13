@@ -603,6 +603,51 @@ def build_combined_pdf_from_targets(
         return False, 0
 
 
+def build_png_collage(images: list[Path], out_file: Path, cols: int = 3, max_images: int = 10, tile_w: int = 620) -> tuple[bool, int]:
+    try:
+        items = [p for p in images if p.exists()][:max_images]
+        if not items:
+            return False, 0
+
+        pil_images = []
+        for p in items:
+            im = Image.open(p).convert("RGB")
+            ratio = tile_w / max(1, im.width)
+            tile_h = int(im.height * ratio)
+            pil_images.append(im.resize((tile_w, tile_h)))
+
+        rows = (len(pil_images) + cols - 1) // cols
+        row_heights = []
+        for r in range(rows):
+            row = pil_images[r * cols : (r + 1) * cols]
+            row_heights.append(max(im.height for im in row) if row else 0)
+
+        pad = 12
+        width = cols * tile_w + (cols + 1) * pad
+        height = sum(row_heights) + (rows + 1) * pad
+        canvas = Image.new("RGB", (width, height), (245, 245, 245))
+
+        y = pad
+        idx = 0
+        for r in range(rows):
+            x = pad
+            for _ in range(cols):
+                if idx >= len(pil_images):
+                    break
+                im = pil_images[idx]
+                canvas.paste(im, (x, y))
+                x += tile_w + pad
+                idx += 1
+            y += row_heights[r] + pad
+
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        canvas.save(out_file, format="PNG")
+        return True, len(items)
+    except Exception as e:
+        log.warning("build png collage failed: %s", e)
+        return False, 0
+
+
 def split_text_chunks(text: str, limit: int = 3500) -> list[str]:
     s = (text or "").strip()
     if not s:
@@ -994,6 +1039,7 @@ def action_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📄 PDF откуда Инфо", callback_data="act:src")],
+            [InlineKeyboardButton("🧩 PNG коллаж", callback_data="act:collage")],
             [InlineKeyboardButton("📎 Цитаты + PDF", callback_data="act:citsrc")],
             [InlineKeyboardButton("🧠 Mindmap", callback_data="act:mm")],
         ]
@@ -1838,6 +1884,44 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await q.message.reply_text("Sources: не найдено изображений и ссылок.")
         out = "\n\n".join(f"{i+1}. {t}\n{h}" for i, (t, h) in enumerate(links[:20]))
         return await q.message.reply_text(out[:3900])
+
+    if data == "act:collage":
+        st = context.application.bot_data["db"].get_user(update.effective_user.id)
+        idx = load_storage_index().get("items", {})
+        selected_ids = st.get("selected_files", [])
+        if not selected_ids:
+            return await q.message.reply_text("Сначала выбери документ(ы) через /files.")
+
+        for sid in selected_ids:
+            target_item = None
+            needle = str(sid).replace("\u200b", "").strip().lower()
+            if needle in idx:
+                target_item = idx.get(needle)
+            else:
+                for _, item in idx.items():
+                    aliases = [str(x).replace("\u200b", "").strip().lower() for x in item.get("aliases", [])]
+                    if needle in aliases:
+                        target_item = item
+                        break
+            if not target_item:
+                continue
+
+            pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
+            if not pages:
+                return await q.message.reply_text("Не нашёл страницы цитат для коллажа.")
+            png_dir = Path(target_item.get("png_pages_dir", ""))
+            pngs = [png_dir / f"page-{p:04d}.png" for p in pages]
+            collage = Path("./out") / f"collage_{update.effective_user.id}_{storage_key(str(sid))}.png"
+            okc, n = build_png_collage(pngs, collage, cols=3, max_images=10)
+            if not okc:
+                return await q.message.reply_text("Не удалось собрать коллаж PNG.")
+
+            with collage.open("rb") as f:
+                await q.message.reply_photo(photo=f, caption=f"PNG коллаж по цитатам ({n} стр.)")
+            return
+
+        return await q.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
+
     if data == "act:citsrc":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
         rows = extract_citations_data(st.get("last_retrieval_html", ""), top_n=5)
