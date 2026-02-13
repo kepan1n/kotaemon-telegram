@@ -586,8 +586,10 @@ def split_text_chunks(text: str, limit: int = 3500) -> list[str]:
 
 
 async def send_document_retry(msg, path: Path, caption: str | None = None) -> bool:
-    for _ in range(2):
+    for attempt in range(1, 3):
         try:
+            size = path.stat().st_size if path.exists() else -1
+            log.info("reply_document attempt=%s path=%s size=%s", attempt, path, size)
             with path.open("rb") as f:
                 await msg.reply_document(
                     document=f,
@@ -599,7 +601,7 @@ async def send_document_retry(msg, path: Path, caption: str | None = None) -> bo
                 )
             return True
         except Exception as e:
-            log.warning("reply_document failed: %s", e)
+            log.exception("reply_document failed attempt=%s path=%s err=%s", attempt, path, e)
     return False
 
 
@@ -1795,6 +1797,16 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.message.reply_text("Mindmap недоступен для этого ответа.")
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        upd = "unknown"
+        if isinstance(update, Update):
+            upd = f"chat={getattr(update.effective_chat, 'id', None)} user={getattr(update.effective_user, 'id', None)}"
+        log.exception("Unhandled bot error (%s): %s", upd, context.error)
+    except Exception:
+        log.exception("Unhandled bot error (failed to format context): %s", context.error)
+
+
 async def plain_text_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
@@ -1836,6 +1848,7 @@ def main():
     app.add_handler(CommandHandler("mindmap", mindmap_cmd))
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_text_fallback))
+    app.add_error_handler(on_error)
 
     log.info("Bridge V2 started")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
