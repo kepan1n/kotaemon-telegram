@@ -1171,6 +1171,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pages_txt:
             await update.message.reply_text(f"Страницы PDF: {pages_txt}")
 
+        await update.message.reply_text("Собираю единый PDF...")
         combined = Path("./out") / f"sources_combined_{update.effective_user.id}.pdf"
         ok_pdf, pages_in_pdf = build_combined_pdf_from_targets(
             targets,
@@ -1181,6 +1182,17 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ok_pdf:
             with combined.open("rb") as f:
                 await update.message.reply_document(document=f, caption=f"PDF источники: {pages_in_pdf} стр.")
+            return
+
+        # fallback: send individual pages if combined PDF failed
+        sent = 0
+        for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
+            out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
+            if out:
+                with out.open("rb") as f:
+                    await update.message.reply_document(document=f, caption=("Sources (fallback pages)" if i == 1 else None))
+                sent += 1
+        if sent:
             return
 
     # Fallback: embedded evidence images
@@ -1386,6 +1398,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pages_txt:
                 await q.message.reply_text(f"Страницы PDF: {pages_txt}")
 
+            await q.message.reply_text("Собираю единый PDF...")
             combined = Path("./out") / f"sources_combined_{update.effective_user.id}.pdf"
             ok_pdf, pages_in_pdf = build_combined_pdf_from_targets(
                 targets,
@@ -1396,6 +1409,17 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if ok_pdf:
                 with combined.open("rb") as f:
                     await q.message.reply_document(document=f, caption=f"PDF источники: {pages_in_pdf} стр.")
+                return
+
+            # fallback: send individual pages if combined PDF failed
+            sent = 0
+            for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
+                out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
+                if out:
+                    with out.open("rb") as f:
+                        await q.message.reply_document(document=f, caption=("Sources (fallback pages)" if i == 1 else None))
+                    sent += 1
+            if sent:
                 return
 
         blobs = extract_embedded_images(st["last_retrieval_html"], limit=6)
