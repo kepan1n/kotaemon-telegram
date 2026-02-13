@@ -1570,8 +1570,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log.info("sources_cmd local_build sid=%s ok=%s pages=%s out=%s", sid, okp, np, limited)
             if okp:
                 pages_txt = ', '.join(str(x) for x in cited_pages)
-                src_name = Path(target_item.get("source", "")).name or f"{sid}.pdf"
-                cap = f"{src_name} | стр.: {pages_txt}"
+                cap = f"стр.: {pages_txt}"
                 await update.message.reply_text(f"Страницы PDF: {pages_txt}")
                 ok_send = await send_document_retry(update.message, limited, caption=cap)
                 if ok_send:
@@ -1851,8 +1850,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 log.info("act:src local_build sid=%s ok=%s pages=%s out=%s", sid, okp, np, limited)
                 if okp:
                     pages_txt = ', '.join(str(x) for x in cited_pages)
-                    src_name = Path(target_item.get("source", "")).name or f"{sid}.pdf"
-                    cap = f"{src_name} | стр.: {pages_txt}"
+                    cap = f"стр.: {pages_txt}"
                     await q.message.reply_text(f"Страницы PDF: {pages_txt}")
                     ok_send = await send_document_retry(q.message, limited, caption=cap)
                     if ok_send:
