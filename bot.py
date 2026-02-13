@@ -879,6 +879,120 @@ async def safe_edit_text(msg, text: str, reply_markup=None):
         raise
 
 
+def storage_root() -> Path:
+    p = Path("./storage")
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def storage_paths() -> dict[str, Path]:
+    root = storage_root()
+    paths = {
+        "root": root,
+        "incoming": root / "incoming",
+        "pdf_pages": root / "rendered" / "pdf_pages",
+        "png_pages": root / "rendered" / "png_pages",
+        "bundles": root / "rendered" / "bundles",
+        "index": root / "index.json",
+    }
+    for k, v in paths.items():
+        if k != "index":
+            v.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+def load_storage_index() -> dict[str, Any]:
+    p = storage_paths()["index"]
+    if not p.exists():
+        return {"items": {}}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {"items": {}}
+
+
+def save_storage_index(data: dict[str, Any]):
+    p = storage_paths()["index"]
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def storage_key(s: str) -> str:
+    x = re.sub(r"[^0-9a-zA-Z._-]+", "_", (s or "").strip())
+    return x.strip("_")[:120] or hashlib.sha1((s or "x").encode("utf-8")).hexdigest()[:16]
+
+
+def find_bundle_by_alias(alias: str) -> Path | None:
+    idx = load_storage_index().get("items", {})
+    needle = (alias or "").strip().lower()
+    for _, item in idx.items():
+        aliases = [str(x).strip().lower() for x in item.get("aliases", [])]
+        if needle in aliases:
+            b = Path(item.get("bundle", ""))
+            if b.exists():
+                return b
+    return None
+
+
+def ingest_local_pdf(pdf_path: Path, key: str, aliases: list[str] | None = None) -> tuple[bool, int]:
+    try:
+        import fitz  # PyMuPDF
+
+        sp = storage_paths()
+        key = storage_key(key)
+        pdf_dir = sp["pdf_pages"] / key
+        png_dir = sp["png_pages"] / key
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        png_dir.mkdir(parents=True, exist_ok=True)
+
+        doc = fitz.open(str(pdf_path))
+        total = int(doc.page_count)
+        for i in range(total):
+            page_num = i + 1
+            ppdf = pdf_dir / f"page-{page_num:04d}.pdf"
+            ppng = png_dir / f"page-{page_num:04d}.png"
+
+            if not ppdf.exists():
+                nd = fitz.open()
+                nd.insert_pdf(doc, from_page=i, to_page=i)
+                nd.save(str(ppdf))
+                nd.close()
+
+            if not ppng.exists():
+                page = doc.load_page(i)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2.4, 2.4), alpha=False)
+                pix.save(str(ppng))
+
+        bundle = sp["bundles"] / f"{key}.pdf"
+        if not bundle.exists():
+            doc.save(str(bundle))
+        doc.close()
+
+        idx = load_storage_index()
+        items = idx.setdefault("items", {})
+        cur_aliases = set(items.get(key, {}).get("aliases", []))
+        for a in (aliases or []):
+            if a:
+                cur_aliases.add(str(a))
+        cur_aliases.add(key)
+        cur_aliases.add(pdf_path.name)
+        cur_aliases.add(pdf_path.stem)
+
+        items[key] = {
+            "source": str(pdf_path),
+            "bundle": str(bundle),
+            "pdf_pages_dir": str(pdf_dir),
+            "png_pages_dir": str(png_dir),
+            "pages": total,
+            "aliases": sorted(cur_aliases),
+        }
+        save_storage_index(idx)
+        return True, total
+    except Exception as e:
+        log.warning("ingest local pdf failed: %s", e)
+        return False, 0
+
+
 def files_keyboard(files: list[dict[str, str]], selected_ids: list[str], page: int = 0, per_page: int = 8) -> InlineKeyboardMarkup:
     total = len(files)
     pages = max(1, (total + per_page - 1) // per_page)
@@ -964,6 +1078,7 @@ async def cmd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/adduser <id> — добавить пользователя",
             "/deluser <id> — отключить пользователя",
             "/users — ACL список",
+            "/ingest [file_id|name|path] — обработать PDF(ы) из storage/incoming",
             "/prepdf <pdf_url_or_path> — прогреть все страницы PDF в кэш",
             "/prepdfid <file_id> — прогреть PDF по file_id",
         ]
@@ -1104,6 +1219,72 @@ async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(txt))
 
 
+async def ingest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s: Settings = context.application.bot_data["settings"]
+    db: StateDB = context.application.bot_data["db"]
+    b: KotaemonBridge = context.application.bot_data["bridge"]
+    if not auth_ok(update, s, db):
+        return await deny(update)
+    if not admin_ok(update, s, db):
+        return await update.message.reply_text("Только для админа.")
+
+    sp = storage_paths()
+    incoming = sp["incoming"]
+
+    if not context.args:
+        files = sorted(incoming.glob("*.pdf"))
+        if not files:
+            return await update.message.reply_text("В storage/incoming нет PDF.")
+        ok = 0
+        for p in files:
+            done, _ = ingest_local_pdf(p, p.stem, aliases=[p.name, p.stem])
+            if done:
+                ok += 1
+        return await update.message.reply_text(f"Индексация завершена: {ok}/{len(files)} PDF.")
+
+    needle = " ".join(context.args).strip()
+    p = Path(needle)
+    cand: Path | None = None
+    aliases = [needle]
+
+    if p.exists() and p.is_file() and p.suffix.lower() == ".pdf":
+        cand = p
+    else:
+        # incoming by exact filename, stem or file_id
+        direct = incoming / needle
+        if direct.exists() and direct.is_file() and direct.suffix.lower() == ".pdf":
+            cand = direct
+        else:
+            with_ext = incoming / f"{needle}.pdf"
+            if with_ext.exists() and with_ext.is_file():
+                cand = with_ext
+
+    # try map from kotaemon file list (id/name) to incoming
+    if cand is None:
+        for f in b.list_files():
+            if needle == f.get("id") or needle.lower() == str(f.get("name", "")).lower():
+                n = str(f.get("name", "")).strip()
+                fid = str(f.get("id", "")).strip()
+                aliases += [n, fid]
+                for x in [incoming / n, incoming / f"{fid}.pdf", incoming / fid, incoming / f"{n}.pdf"]:
+                    if x.exists() and x.is_file() and x.suffix.lower() == ".pdf":
+                        cand = x
+                        break
+                if cand:
+                    break
+
+    if cand is None:
+        return await update.message.reply_text(
+            "Не нашёл локальный PDF. Положи файл в storage/incoming с именем <file_id>.pdf или <name>.pdf, затем /ingest <file_id|name>."
+        )
+
+    key = storage_key(needle)
+    done, pages = ingest_local_pdf(cand, key, aliases=aliases + [cand.name, cand.stem])
+    if not done:
+        return await update.message.reply_text("Ошибка обработки PDF.")
+    await update.message.reply_text(f"Готово: {cand.name} обработан, страниц: {pages}.")
+
+
 async def _run_ask(update: Update, context: ContextTypes.DEFAULT_TYPE, q: str):
     db: StateDB = context.application.bot_data["db"]
     b: KotaemonBridge = context.application.bot_data["bridge"]
@@ -1159,6 +1340,22 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not auth_ok(update, s, db):
         return await deny(update)
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
+
+    # Fast path: send preprocessed local bundle by selected file_id/name
+    for sid in st.get("selected_files", []):
+        bndl = find_bundle_by_alias(str(sid))
+        if bndl and bndl.exists():
+            idx = load_storage_index().get("items", {})
+            pages = 0
+            for _, item in idx.items():
+                if Path(item.get("bundle", "")) == bndl:
+                    pages = int(item.get("pages", 0) or 0)
+                    break
+            if pages > 0:
+                await update.message.reply_text(f"Страницы PDF: 1..{pages}")
+            with bndl.open("rb") as f:
+                await update.message.reply_document(document=f, caption="PDF источники (из локального хранилища)")
+            return
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1388,6 +1585,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.message.reply_text(parse_citations_text(st["last_retrieval_html"]))
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
+
+        for sid in st.get("selected_files", []):
+            bndl = find_bundle_by_alias(str(sid))
+            if bndl and bndl.exists():
+                idx = load_storage_index().get("items", {})
+                pages = 0
+                for _, item in idx.items():
+                    if Path(item.get("bundle", "")) == bndl:
+                        pages = int(item.get("pages", 0) or 0)
+                        break
+                if pages > 0:
+                    await q.message.reply_text(f"Страницы PDF: 1..{pages}")
+                with bndl.open("rb") as f:
+                    await q.message.reply_document(document=f, caption="PDF источники (из локального хранилища)")
+                return
+
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
             targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
@@ -1503,6 +1716,7 @@ def main():
     app.add_handler(CommandHandler("adduser", adduser_cmd))
     app.add_handler(CommandHandler("deluser", deluser_cmd))
     app.add_handler(CommandHandler("users", users_cmd))
+    app.add_handler(CommandHandler("ingest", ingest_cmd))
     app.add_handler(CommandHandler("ask", ask_cmd))
     app.add_handler(CommandHandler("citations", citations_cmd))
     app.add_handler(CommandHandler("sources", sources_cmd))

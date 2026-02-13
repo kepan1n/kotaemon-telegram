@@ -31,6 +31,7 @@ Telegram-бот для работы с **Kotaemon**: вопросы по док�
 - `/sources` — «PDF откуда Инфо»
 - `/prepdf <pdf_url_or_path>` — админ-команда: заранее отрисовать все страницы одного PDF
 - `/prepdfid <file_id>` — админ-команда: прогреть PDF по file_id
+- `/ingest [file_id|name|path]` — админ-команда: локальная предобработка (или всего `storage/incoming`)
 - `/citsrc` — полная цитата + страница PDF
 - `/mindmap` — mindmap
 - `/relogin` — перелогин в Kotaemon
@@ -63,6 +64,22 @@ chmod +x deploy.sh
 ```bash
 journalctl -u kotaemon-telegram-bridge -f
 ```
+
+## Локальное хранилище (самый быстрый режим)
+
+Клади PDF в:
+- `storage/incoming/<file_id>.pdf` или `storage/incoming/<name>.pdf`
+
+Далее (админ):
+- `/ingest <file_id|name|path>` — обработать один файл
+- `/ingest` — обработать все PDF в `storage/incoming`
+
+Будут созданы:
+- `storage/rendered/pdf_pages/<key>/page-XXXX.pdf`
+- `storage/rendered/png_pages/<key>/page-XXXX.png`
+- `storage/rendered/bundles/<key>.pdf`
+
+Если для выбранного файла есть локальный bundle, кнопка PDF отправляет его сразу.
 
 ## Безопасность
 

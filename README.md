@@ -38,6 +38,7 @@ Telegram bot bridge for **Kotaemon** with document-aware Q&A, citations, PDF sou
 - `/sources` — "PDF where info comes from"
 - `/prepdf <pdf_url_or_path>` — admin-only pre-render of all pages for one PDF
 - `/prepdfid <file_id>` — admin-only pre-render by Kotaemon file_id
+- `/ingest [file_id|name|path]` — admin-only local storage ingest (or ingest all from `storage/incoming`)
 - `/citsrc` — full citation + matched PDF page
 - `/mindmap` — mindmap image
 - `/relogin` — relogin to Kotaemon
@@ -72,6 +73,22 @@ Logs:
 ```bash
 journalctl -u kotaemon-telegram-bridge -f
 ```
+
+## Local storage mode (fastest)
+
+Put PDFs into:
+- `storage/incoming/<file_id>.pdf` or `storage/incoming/<name>.pdf`
+
+Then run (admin):
+- `/ingest <file_id|name|path>` for one file
+- `/ingest` to process all PDFs in `storage/incoming`
+
+Generated artifacts:
+- `storage/rendered/pdf_pages/<key>/page-XXXX.pdf`
+- `storage/rendered/png_pages/<key>/page-XXXX.png`
+- `storage/rendered/bundles/<key>.pdf`
+
+When a selected file has a local bundle, the PDF button sends it directly from storage.
 
 ## Security
 
