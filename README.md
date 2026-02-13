@@ -18,6 +18,8 @@ Telegram bot bridge for **Kotaemon** with document-aware Q&A, citations, PDF sou
 - Ask questions (`/ask` or plain text)
 - Clean citations output (`/citations`)
 - Source pages as high-quality PDF renders (`/sources`)
+- Disk cache for rendered PDF pages (faster repeated sends)
+- Pre-warm all found source pages in advance (`/prepdf`)
 - "Citation + PDF" flow with full quote and matching page (`/citsrc`)
 - Mindmap image rendering (`/mindmap`) with pretty renderer + fallback
 - Admin ACL commands: `/adduser`, `/deluser`, `/users`
@@ -34,6 +36,7 @@ Telegram bot bridge for **Kotaemon** with document-aware Q&A, citations, PDF sou
 - `/ask <question>` — ask Kotaemon
 - `/citations` — cleaned citations
 - `/sources` — "PDF where info comes from"
+- `/prepdf` — pre-render all detected source pages to cache
 - `/citsrc` — full citation + matched PDF page
 - `/mindmap` — mindmap image
 - `/relogin` — relogin to Kotaemon

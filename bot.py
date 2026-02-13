@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import hashlib
 import logging
 import os
 import re
@@ -441,6 +442,21 @@ def format_pages_brief(targets: list[tuple[str, int]]) -> str:
     return ", ".join(str(p) for p in pages)
 
 
+def pdf_cache_file(pdf_url: str, page_num: int, zoom: float = 2.6, cache_dir: Path = Path("./out/pdf_cache")) -> Path:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(f"{pdf_url}|{page_num}|{zoom:.2f}".encode("utf-8")).hexdigest()[:16]
+    return cache_dir / f"p{page_num}_{key}.png"
+
+
+def get_or_render_pdf_page_png(pdf_url: str, page_num: int, zoom: float = 2.6) -> Path | None:
+    out_file = pdf_cache_file(pdf_url, page_num, zoom=zoom)
+    if out_file.exists() and out_file.stat().st_size > 0:
+        return out_file
+    if render_pdf_page_png(pdf_url, page_num, out_file, zoom=zoom):
+        return out_file
+    return None
+
+
 def render_pdf_page_png(pdf_url: str, page_num: int, out_file: Path, zoom: float = 2.2) -> bool:
     try:
         import fitz  # PyMuPDF
@@ -741,6 +757,7 @@ async def cmd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ask <вопрос> — задать вопрос",
         "/citations — очищенные цитаты",
         "/sources — страницы PDF-источников",
+        "/prepdf — прогреть все найденные PDF-страницы в кэш",
         "/citsrc — полная цитата + страница источника",
         "/mindmap — mindmap",
         "/relogin — переподключить Kotaemon",
@@ -941,15 +958,14 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Best quality: render original PDF pages from preview metadata
     targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
-    out_dir = Path("./out")
     sent = 0
     if targets:
         pages_txt = format_pages_brief(targets)
         if pages_txt:
             await update.message.reply_text(f"Страницы PDF: {pages_txt}")
     for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
-        out = out_dir / f"src_page_{update.effective_user.id}_{i}.png"
-        if render_pdf_page_png(pdf_url, page_num, out, zoom=2.6):
+        out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6)
+        if out:
             with out.open("rb") as f:
                 await update.message.reply_document(document=f, caption=("Sources (PDF pages)" if i == 1 else None))
             sent += 1
@@ -975,6 +991,29 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(txt[:3900])
 
 
+async def prepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s: Settings = context.application.bot_data["settings"]
+    db: StateDB = context.application.bot_data["db"]
+    if not auth_ok(update, s, db):
+        return await deny(update)
+
+    st = db.get_user(update.effective_user.id)
+    targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
+    if not targets:
+        return await update.message.reply_text("Нет страниц PDF для прогрева (сначала задай вопрос).")
+
+    pages_txt = format_pages_brief(targets)
+    await update.message.reply_text(f"Прогрев PDF-страниц: {pages_txt}")
+
+    ok = 0
+    for pdf_url, page_num in targets:
+        p = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6)
+        if p:
+            ok += 1
+
+    await update.message.reply_text(f"Готово: подготовлено {ok}/{len(targets)} страниц в кэше.")
+
+
 async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
@@ -997,8 +1036,8 @@ async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if src:
             if src.startswith("/"):
                 src = s.kotaemon_url.rstrip("/") + src
-            out = out_dir / f"citsrc_{update.effective_user.id}_{i}.png"
-            if render_pdf_page_png(src, page, out, zoom=2.6):
+            out = get_or_render_pdf_page_png(src, page, zoom=2.6)
+            if out:
                 with out.open("rb") as f:
                     await update.message.reply_photo(photo=f, caption=caption)
                 continue
@@ -1096,15 +1135,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
         targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
-        out_dir = Path("./out")
         sent = 0
         if targets:
             pages_txt = format_pages_brief(targets)
             if pages_txt:
                 await q.message.reply_text(f"Страницы PDF: {pages_txt}")
         for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
-            out = out_dir / f"src_page_{update.effective_user.id}_{i}.png"
-            if render_pdf_page_png(pdf_url, page_num, out, zoom=2.6):
+            out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6)
+            if out:
                 with out.open("rb") as f:
                     await q.message.reply_document(document=f, caption=("Sources (PDF pages)" if i == 1 else None))
                 sent += 1
@@ -1140,8 +1178,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if src:
                 if src.startswith("/"):
                     src = s.kotaemon_url.rstrip("/") + src
-                out = out_dir / f"citsrc_{update.effective_user.id}_{i}.png"
-                if render_pdf_page_png(src, page, out, zoom=2.6):
+                out = get_or_render_pdf_page_png(src, page, zoom=2.6)
+                if out:
                     with out.open("rb") as f:
                         await q.message.reply_photo(photo=f, caption=caption)
                     continue
@@ -1202,6 +1240,7 @@ def main():
     app.add_handler(CommandHandler("ask", ask_cmd))
     app.add_handler(CommandHandler("citations", citations_cmd))
     app.add_handler(CommandHandler("sources", sources_cmd))
+    app.add_handler(CommandHandler("prepdf", prepdf_cmd))
     app.add_handler(CommandHandler("citsrc", citsrc_cmd))
     app.add_handler(CommandHandler("mindmap", mindmap_cmd))
     app.add_handler(CallbackQueryHandler(callback_router))
