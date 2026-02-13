@@ -489,6 +489,27 @@ def targets_from_state(st: dict[str, Any], base_url: str) -> list[tuple[str, int
     return out
 
 
+def build_pdf_from_local_pages_dir(pages_dir: Path, out_pdf: Path, max_pages: int = 10) -> tuple[bool, int]:
+    try:
+        files = sorted(pages_dir.glob("page-*.pdf"))[:max_pages]
+        if not files:
+            return False, 0
+        import fitz  # PyMuPDF
+
+        out_pdf.parent.mkdir(parents=True, exist_ok=True)
+        doc = fitz.open()
+        for p in files:
+            src = fitz.open(str(p))
+            doc.insert_pdf(src)
+            src.close()
+        doc.save(str(out_pdf))
+        doc.close()
+        return True, len(files)
+    except Exception as e:
+        log.warning("build local limited pdf failed: %s", e)
+        return False, 0
+
+
 def build_combined_pdf_from_targets(
     targets: list[tuple[str, int]],
     out_pdf: Path,
@@ -1341,21 +1362,26 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await deny(update)
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
-    # Fast path: send preprocessed local bundle by selected file_id/name
+    # Fast path: send preprocessed local bundle by selected file_id/name (limit first 10 pages)
     for sid in st.get("selected_files", []):
-        bndl = find_bundle_by_alias(str(sid))
-        if bndl and bndl.exists():
-            idx = load_storage_index().get("items", {})
-            pages = 0
-            for _, item in idx.items():
-                if Path(item.get("bundle", "")) == bndl:
-                    pages = int(item.get("pages", 0) or 0)
-                    break
-            if pages > 0:
-                await update.message.reply_text(f"Страницы PDF: 1..{pages}")
-            with bndl.open("rb") as f:
-                await update.message.reply_document(document=f, caption="PDF источники (из локального хранилища)")
-            return
+        idx = load_storage_index().get("items", {})
+        target_item = None
+        needle = str(sid).strip().lower()
+        for _, item in idx.items():
+            aliases = [str(x).strip().lower() for x in item.get("aliases", [])]
+            if needle in aliases:
+                target_item = item
+                break
+        if target_item:
+            pages_total = int(target_item.get("pages", 0) or 0)
+            pages_dir = Path(target_item.get("pdf_pages_dir", ""))
+            limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_10p.pdf"
+            ok10, n10 = build_pdf_from_local_pages_dir(pages_dir, limited, max_pages=10)
+            if ok10:
+                await update.message.reply_text(f"Страницы PDF: 1..{pages_total}. Отправляю первые {n10}.")
+                with limited.open("rb") as f:
+                    await update.message.reply_document(document=f, caption=f"PDF источники (первые {n10} стр.)")
+                return
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1587,19 +1613,24 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
         for sid in st.get("selected_files", []):
-            bndl = find_bundle_by_alias(str(sid))
-            if bndl and bndl.exists():
-                idx = load_storage_index().get("items", {})
-                pages = 0
-                for _, item in idx.items():
-                    if Path(item.get("bundle", "")) == bndl:
-                        pages = int(item.get("pages", 0) or 0)
-                        break
-                if pages > 0:
-                    await q.message.reply_text(f"Страницы PDF: 1..{pages}")
-                with bndl.open("rb") as f:
-                    await q.message.reply_document(document=f, caption="PDF источники (из локального хранилища)")
-                return
+            idx = load_storage_index().get("items", {})
+            target_item = None
+            needle = str(sid).strip().lower()
+            for _, item in idx.items():
+                aliases = [str(x).strip().lower() for x in item.get("aliases", [])]
+                if needle in aliases:
+                    target_item = item
+                    break
+            if target_item:
+                pages_total = int(target_item.get("pages", 0) or 0)
+                pages_dir = Path(target_item.get("pdf_pages_dir", ""))
+                limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_10p.pdf"
+                ok10, n10 = build_pdf_from_local_pages_dir(pages_dir, limited, max_pages=10)
+                if ok10:
+                    await q.message.reply_text(f"Страницы PDF: 1..{pages_total}. Отправляю первые {n10}.")
+                    with limited.open("rb") as f:
+                        await q.message.reply_document(document=f, caption=f"PDF источники (первые {n10} стр.)")
+                    return
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
