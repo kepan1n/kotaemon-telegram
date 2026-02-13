@@ -457,6 +457,38 @@ def get_or_render_pdf_page_png(pdf_url: str, page_num: int, zoom: float = 2.6) -
     return None
 
 
+def prewarm_pdf_all_pages(pdf_url: str, zoom: float = 2.6) -> tuple[int, int, int]:
+    """Return (total_pages, rendered_new, already_cached)."""
+    try:
+        import fitz  # PyMuPDF
+
+        r = requests.get(pdf_url, timeout=60)
+        r.raise_for_status()
+        doc = fitz.open(stream=r.content, filetype="pdf")
+
+        total = int(doc.page_count)
+        rendered = 0
+        cached = 0
+        for idx in range(total):
+            page_num = idx + 1
+            out_file = pdf_cache_file(pdf_url, page_num, zoom=zoom)
+            if out_file.exists() and out_file.stat().st_size > 0:
+                cached += 1
+                continue
+            page = doc.load_page(idx)
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            pix.save(str(out_file))
+            rendered += 1
+
+        doc.close()
+        return total, rendered, cached
+    except Exception as e:
+        log.warning("prewarm all pages failed: %s", e)
+        return 0, 0, 0
+
+
 def render_pdf_page_png(pdf_url: str, page_num: int, out_file: Path, zoom: float = 2.2) -> bool:
     try:
         import fitz  # PyMuPDF
@@ -757,7 +789,6 @@ async def cmd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/ask <вопрос> — задать вопрос",
         "/citations — очищенные цитаты",
         "/sources — страницы PDF-источников",
-        "/prepdf — прогреть все найденные PDF-страницы в кэш",
         "/citsrc — полная цитата + страница источника",
         "/mindmap — mindmap",
         "/relogin — переподключить Kotaemon",
@@ -770,6 +801,7 @@ async def cmd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/adduser <id> — добавить пользователя",
             "/deluser <id> — отключить пользователя",
             "/users — ACL список",
+            "/prepdf <pdf_url_or_path> — прогреть все страницы PDF в кэш",
         ]
     await update.message.reply_text("\n".join(base))
 
@@ -996,22 +1028,31 @@ async def prepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db: StateDB = context.application.bot_data["db"]
     if not auth_ok(update, s, db):
         return await deny(update)
+    if not admin_ok(update, s, db):
+        return await update.message.reply_text("Только для админа.")
 
-    st = db.get_user(update.effective_user.id)
-    targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
-    if not targets:
-        return await update.message.reply_text("Нет страниц PDF для прогрева (сначала задай вопрос).")
+    if not context.args:
+        return await update.message.reply_text(
+            "Использование: /prepdf <pdf_url_or_path>\n"
+            "Пример: /prepdf /files/manual.pdf"
+        )
 
-    pages_txt = format_pages_brief(targets)
-    await update.message.reply_text(f"Прогрев PDF-страниц: {pages_txt}")
+    arg = " ".join(context.args).strip()
+    pdf_url = arg
+    if pdf_url.startswith("/"):
+        pdf_url = s.kotaemon_url.rstrip("/") + pdf_url
 
-    ok = 0
-    for pdf_url, page_num in targets:
-        p = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6)
-        if p:
-            ok += 1
+    if not pdf_url.lower().startswith(("http://", "https://")):
+        return await update.message.reply_text("Нужен прямой URL/путь к PDF (http(s)://... или /path/to/file.pdf)")
 
-    await update.message.reply_text(f"Готово: подготовлено {ok}/{len(targets)} страниц в кэше.")
+    await update.message.reply_text(f"Прогрев всех страниц PDF: {pdf_url}")
+    total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6)
+    if total <= 0:
+        return await update.message.reply_text("Не удалось открыть PDF. Проверь ссылку/путь и доступность файла.")
+
+    await update.message.reply_text(
+        f"Готово. Всего страниц: {total}. Новых отрисовано: {rendered}. Уже было в кэше: {cached}."
+    )
 
 
 async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
