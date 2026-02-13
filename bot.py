@@ -489,6 +489,34 @@ def targets_from_state(st: dict[str, Any], base_url: str) -> list[tuple[str, int
     return out
 
 
+def build_combined_pdf_from_targets(
+    targets: list[tuple[str, int]],
+    out_pdf: Path,
+    zoom: float = 2.6,
+    cookies: dict[str, str] | None = None,
+) -> tuple[bool, int]:
+    """Build one PDF from rendered target pages; returns (ok, page_count)."""
+    try:
+        images: list[Image.Image] = []
+        for src, page in targets:
+            p = get_or_render_pdf_page_png(src, page, zoom=zoom, cookies=cookies)
+            if not p or not p.exists():
+                continue
+            img = Image.open(p).convert("RGB")
+            images.append(img)
+
+        if not images:
+            return False, 0
+
+        out_pdf.parent.mkdir(parents=True, exist_ok=True)
+        first, rest = images[0], images[1:]
+        first.save(out_pdf, format="PDF", save_all=True, append_images=rest, resolution=220.0)
+        return True, len(images)
+    except Exception as e:
+        log.warning("combined pdf build failed: %s", e)
+        return False, 0
+
+
 def split_text_chunks(text: str, limit: int = 3500) -> list[str]:
     s = (text or "").strip()
     if not s:
@@ -1138,19 +1166,22 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
         if targets:
             db.save_user(update.effective_user.id, last_pdf_targets=targets)
-    sent = 0
     if targets:
         pages_txt = format_pages_brief(targets)
         if pages_txt:
             await update.message.reply_text(f"Страницы PDF: {pages_txt}")
-    for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
-        out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
-        if out:
-            with out.open("rb") as f:
-                await update.message.reply_document(document=f, caption=("Sources (PDF pages)" if i == 1 else None))
-            sent += 1
-    if sent:
-        return
+
+        combined = Path("./out") / f"sources_combined_{update.effective_user.id}.pdf"
+        ok_pdf, pages_in_pdf = build_combined_pdf_from_targets(
+            targets,
+            combined,
+            zoom=2.6,
+            cookies=b.client.cookies,
+        )
+        if ok_pdf:
+            with combined.open("rb") as f:
+                await update.message.reply_document(document=f, caption=f"PDF источники: {pages_in_pdf} стр.")
+            return
 
     # Fallback: embedded evidence images
     blobs = extract_embedded_images(st["last_retrieval_html"], limit=6)
@@ -1350,19 +1381,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
             if targets:
                 context.application.bot_data["db"].save_user(update.effective_user.id, last_pdf_targets=targets)
-        sent = 0
         if targets:
             pages_txt = format_pages_brief(targets)
             if pages_txt:
                 await q.message.reply_text(f"Страницы PDF: {pages_txt}")
-        for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
-            out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
-            if out:
-                with out.open("rb") as f:
-                    await q.message.reply_document(document=f, caption=("Sources (PDF pages)" if i == 1 else None))
-                sent += 1
-        if sent:
-            return
+
+            combined = Path("./out") / f"sources_combined_{update.effective_user.id}.pdf"
+            ok_pdf, pages_in_pdf = build_combined_pdf_from_targets(
+                targets,
+                combined,
+                zoom=2.6,
+                cookies=b.client.cookies,
+            )
+            if ok_pdf:
+                with combined.open("rb") as f:
+                    await q.message.reply_document(document=f, caption=f"PDF источники: {pages_in_pdf} стр.")
+                return
 
         blobs = extract_embedded_images(st["last_retrieval_html"], limit=6)
         if blobs:
