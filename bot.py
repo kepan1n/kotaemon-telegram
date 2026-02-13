@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import hashlib
+import asyncio
 import logging
 import os
 import re
@@ -596,16 +597,23 @@ async def send_document_retry(msg, path: Path, caption: str | None = None) -> bo
         try:
             size = path.stat().st_size if path.exists() else -1
             log.info("reply_document attempt=%s path=%s size=%s", attempt, path, size)
-            with path.open("rb") as f:
-                await msg.reply_document(
-                    document=f,
-                    caption=caption,
-                    read_timeout=None,
-                    write_timeout=None,
-                    connect_timeout=30,
-                    pool_timeout=30,
-                )
+
+            async def _send_once():
+                with path.open("rb") as f:
+                    return await msg.reply_document(
+                        document=f,
+                        caption=caption,
+                        read_timeout=None,
+                        write_timeout=None,
+                        connect_timeout=30,
+                        pool_timeout=30,
+                    )
+
+            await asyncio.wait_for(_send_once(), timeout=65)
+            log.info("reply_document success attempt=%s path=%s", attempt, path)
             return True
+        except asyncio.TimeoutError:
+            log.error("reply_document local-timeout attempt=%s path=%s", attempt, path)
         except Exception as e:
             log.exception("reply_document failed attempt=%s path=%s err=%s", attempt, path, e)
     return False
@@ -1613,7 +1621,11 @@ async def mindmap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
+    try:
+        await q.answer()
+    except BadRequest as e:
+        if "Query is too old" not in str(e):
+            raise
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
     if not auth_ok(update, s, db):
