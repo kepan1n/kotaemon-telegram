@@ -510,6 +510,35 @@ def build_pdf_from_local_pages_dir(pages_dir: Path, out_pdf: Path, max_pages: in
         return False, 0
 
 
+def build_pdf_from_local_pages(pages_dir: Path, out_pdf: Path, pages: list[int], max_pages: int = 10) -> tuple[bool, int]:
+    try:
+        uniq_pages = sorted({int(p) for p in pages if int(p) > 0})[:max_pages]
+        if not uniq_pages:
+            return False, 0
+        import fitz  # PyMuPDF
+
+        out_pdf.parent.mkdir(parents=True, exist_ok=True)
+        doc = fitz.open()
+        added = 0
+        for p in uniq_pages:
+            fp = pages_dir / f"page-{p:04d}.pdf"
+            if not fp.exists():
+                continue
+            src = fitz.open(str(fp))
+            doc.insert_pdf(src)
+            src.close()
+            added += 1
+        if added == 0:
+            doc.close()
+            return False, 0
+        doc.save(str(out_pdf))
+        doc.close()
+        return True, added
+    except Exception as e:
+        log.warning("build local citation-pages pdf failed: %s", e)
+        return False, 0
+
+
 def build_combined_pdf_from_targets(
     targets: list[tuple[str, int]],
     out_pdf: Path,
@@ -1362,7 +1391,8 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await deny(update)
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
-    # Fast path: send preprocessed local bundle by selected file_id/name (limit first 10 pages)
+    # Fast path: send preprocessed local pages for citation page numbers only
+    targets_state = targets_from_state(st, s.kotaemon_url)
     for sid in st.get("selected_files", []):
         idx = load_storage_index().get("items", {})
         target_item = None
@@ -1373,15 +1403,22 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_item = item
                 break
         if target_item:
-            pages_total = int(target_item.get("pages", 0) or 0)
-            pages_dir = Path(target_item.get("pdf_pages_dir", ""))
-            limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_10p.pdf"
-            ok10, n10 = build_pdf_from_local_pages_dir(pages_dir, limited, max_pages=10)
-            if ok10:
-                await update.message.reply_text(f"Страницы PDF: 1..{pages_total}. Отправляю первые {n10}.")
-                with limited.open("rb") as f:
-                    await update.message.reply_document(document=f, caption=f"PDF источники (первые {n10} стр.)")
-                return
+            aliases = [str(x).strip().lower() for x in target_item.get("aliases", [])]
+            pages = []
+            for src, pg in targets_state:
+                ssrc = str(src).lower()
+                if any(a and a in ssrc for a in aliases):
+                    pages.append(int(pg))
+            pages = sorted(set(pages))
+            if pages:
+                pages_dir = Path(target_item.get("pdf_pages_dir", ""))
+                limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
+                okp, np = build_pdf_from_local_pages(pages_dir, limited, pages, max_pages=10)
+                if okp:
+                    await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
+                    with limited.open("rb") as f:
+                        await update.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                    return
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1612,6 +1649,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
+        targets_state = targets_from_state(st, s.kotaemon_url)
         for sid in st.get("selected_files", []):
             idx = load_storage_index().get("items", {})
             target_item = None
@@ -1622,15 +1660,22 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_item = item
                     break
             if target_item:
-                pages_total = int(target_item.get("pages", 0) or 0)
-                pages_dir = Path(target_item.get("pdf_pages_dir", ""))
-                limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_10p.pdf"
-                ok10, n10 = build_pdf_from_local_pages_dir(pages_dir, limited, max_pages=10)
-                if ok10:
-                    await q.message.reply_text(f"Страницы PDF: 1..{pages_total}. Отправляю первые {n10}.")
-                    with limited.open("rb") as f:
-                        await q.message.reply_document(document=f, caption=f"PDF источники (первые {n10} стр.)")
-                    return
+                aliases = [str(x).strip().lower() for x in target_item.get("aliases", [])]
+                pages = []
+                for src, pg in targets_state:
+                    ssrc = str(src).lower()
+                    if any(a and a in ssrc for a in aliases):
+                        pages.append(int(pg))
+                pages = sorted(set(pages))
+                if pages:
+                    pages_dir = Path(target_item.get("pdf_pages_dir", ""))
+                    limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
+                    okp, np = build_pdf_from_local_pages(pages_dir, limited, pages, max_pages=10)
+                    if okp:
+                        await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
+                        with limited.open("rb") as f:
+                            await q.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                        return
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
