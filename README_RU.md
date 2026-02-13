@@ -32,6 +32,7 @@ Telegram-бот для работы с **Kotaemon**: вопросы по док�
 - `/prepdf <pdf_url_or_path>` — админ-команда: заранее отрисовать все страницы одного PDF
 - `/prepdfid <file_id>` — админ-команда: прогреть PDF по file_id
 - `/ingest [file_id|name|path]` — админ-команда: локальная предобработка (или всего `storage/incoming`)
+- Inline-кнопка `🧩 PNG альбом`: отправка PNG-страниц по цитатам одним media-group сообщением
 - `/citsrc` — полная цитата + страница PDF
 - `/mindmap` — mindmap
 - `/relogin` — перелогин в Kotaemon
@@ -80,6 +81,27 @@ journalctl -u kotaemon-telegram-bridge -f
 - `storage/rendered/bundles/<key>.pdf`
 
 Если для выбранного файла есть локальный bundle, кнопка PDF отправляет его сразу.
+
+## Прокси (опционально, systemd drop-in)
+
+Если Telegram работает нестабильно без прокси, добавьте HTTP-прокси через drop-in:
+
+`/etc/systemd/system/kotaemon-telegram-bridge.service.d/proxy.conf`
+
+```ini
+[Service]
+Environment="HTTP_PROXY=http://127.0.0.1:7080"
+Environment="HTTPS_PROXY=http://127.0.0.1:7080"
+Environment="NO_PROXY=localhost,127.0.0.1,1chat.legenda-group.ru,.legenda-group.ru"
+```
+
+Применить:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart kotaemon-telegram-bridge
+sudo systemctl show kotaemon-telegram-bridge --property=Environment --no-pager
+```
 
 ## Безопасность
 

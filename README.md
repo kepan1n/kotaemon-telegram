@@ -39,6 +39,7 @@ Telegram bot bridge for **Kotaemon** with document-aware Q&A, citations, PDF sou
 - `/prepdf <pdf_url_or_path>` — admin-only pre-render of all pages for one PDF
 - `/prepdfid <file_id>` — admin-only pre-render by Kotaemon file_id
 - `/ingest [file_id|name|path]` — admin-only local storage ingest (or ingest all from `storage/incoming`)
+- Inline `🧩 PNG album` action: sends cited PNG pages as one Telegram media-group message
 - `/citsrc` — full citation + matched PDF page
 - `/mindmap` — mindmap image
 - `/relogin` — relogin to Kotaemon
@@ -89,6 +90,27 @@ Generated artifacts:
 - `storage/rendered/bundles/<key>.pdf`
 
 When a selected file has a local bundle, the PDF button sends it directly from storage.
+
+## Proxy (optional, systemd drop-in)
+
+If Telegram is unstable without proxy, configure HTTP proxy via systemd drop-in:
+
+`/etc/systemd/system/kotaemon-telegram-bridge.service.d/proxy.conf`
+
+```ini
+[Service]
+Environment="HTTP_PROXY=http://127.0.0.1:7080"
+Environment="HTTPS_PROXY=http://127.0.0.1:7080"
+Environment="NO_PROXY=localhost,127.0.0.1,1chat.legenda-group.ru,.legenda-group.ru"
+```
+
+Then apply:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart kotaemon-telegram-bridge
+sudo systemctl show kotaemon-telegram-bridge --property=Environment --no-pager
+```
 
 ## Security
 
