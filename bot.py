@@ -1461,7 +1461,9 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Fast path: send one local PDF built from cited pages
     idx = load_storage_index().get("items", {})
-    for sid in st.get("selected_files", []):
+    selected_ids = st.get("selected_files", [])
+    matched_local = False
+    for sid in selected_ids:
         target_item = None
         needle = str(sid).strip().lower()
         for _, item in idx.items():
@@ -1470,6 +1472,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 target_item = item
                 break
         if target_item:
+            matched_local = True
             cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
             if not cited_pages:
                 return await update.message.reply_text("Не нашёл страницы цитат для выбранного файла. Сначала задай вопрос по нему.")
@@ -1484,6 +1487,9 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
                 schedule_background_pdf_send(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                 return
+
+    if selected_ids and not matched_local:
+        return await update.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1719,7 +1725,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
         idx = load_storage_index().get("items", {})
-        for sid in st.get("selected_files", []):
+        selected_ids = st.get("selected_files", [])
+        matched_local = False
+        for sid in selected_ids:
             target_item = None
             needle = str(sid).strip().lower()
             for _, item in idx.items():
@@ -1728,6 +1736,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     target_item = item
                     break
             if target_item:
+                matched_local = True
                 cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
                 if not cited_pages:
                     return await q.message.reply_text("Не нашёл страницы цитат для выбранного файла. Сначала задай вопрос по нему.")
@@ -1742,6 +1751,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await q.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
                     schedule_background_pdf_send(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                     return
+
+        if selected_ids and not matched_local:
+            return await q.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
