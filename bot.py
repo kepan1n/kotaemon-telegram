@@ -16,7 +16,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from gradio_client import Client
 from PIL import Image, ImageDraw, ImageFont
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, InputMediaPhoto
 from telegram.error import BadRequest
 from telegram.ext import (
     Application,
@@ -1039,7 +1039,7 @@ def action_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("📄 PDF откуда Инфо", callback_data="act:src")],
-            [InlineKeyboardButton("🧩 PNG коллаж", callback_data="act:collage")],
+            [InlineKeyboardButton("🧩 PNG альбом", callback_data="act:collage")],
             [InlineKeyboardButton("📎 Цитаты + PDF", callback_data="act:citsrc")],
             [InlineKeyboardButton("🧠 Mindmap", callback_data="act:mm")],
         ]
@@ -1923,28 +1923,35 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             missing = [str(p) for p in pngs if not p.exists()]
             if missing:
                 log.warning("act:collage missing png sid=%s count=%s first=%s", sid, len(missing), missing[0])
-            collage = Path("./out") / f"collage_{update.effective_user.id}_{storage_key(str(sid))}.png"
-            okc, n = build_png_collage(pngs, collage, cols=3, max_images=10)
-            log.info("act:collage build sid=%s ok=%s count=%s out=%s", sid, okc, n, collage)
-            if not okc:
-                return await q.message.reply_text("Не удалось собрать коллаж PNG.")
+            existing_pngs = [p for p in pngs if p.exists()][:10]
+            if not existing_pngs:
+                return await q.message.reply_text("Не нашёл PNG для отправки.")
 
             try:
-                size = collage.stat().st_size if collage.exists() else -1
-                log.info("act:collage send sid=%s path=%s size=%s", sid, collage, size)
-                with collage.open("rb") as f:
-                    await q.message.reply_photo(
-                        photo=f,
-                        caption=f"PNG коллаж по цитатам ({n} стр.)",
-                        read_timeout=None,
-                        write_timeout=None,
-                        connect_timeout=30,
-                        pool_timeout=30,
+                media = []
+                for i, p in enumerate(existing_pngs):
+                    with p.open("rb") as f:
+                        blob = io.BytesIO(f.read())
+                    blob.name = p.name
+                    media.append(
+                        InputMediaPhoto(
+                            media=blob,
+                            caption=(f"PNG по цитатам ({len(existing_pngs)} стр.)" if i == 0 else None),
+                        )
                     )
-                log.info("act:collage send success sid=%s", sid)
+
+                log.info("act:collage send_media_group sid=%s count=%s", sid, len(existing_pngs))
+                await q.message.reply_media_group(
+                    media=media,
+                    read_timeout=None,
+                    write_timeout=None,
+                    connect_timeout=30,
+                    pool_timeout=30,
+                )
+                log.info("act:collage send_media_group success sid=%s", sid)
             except Exception as e:
-                log.exception("act:collage send failed sid=%s err=%s", sid, e)
-                return await q.message.reply_text("Не удалось отправить коллаж (таймаут).")
+                log.exception("act:collage send_media_group failed sid=%s err=%s", sid, e)
+                return await q.message.reply_text("Не удалось отправить PNG альбом.")
             return
 
         return await q.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
