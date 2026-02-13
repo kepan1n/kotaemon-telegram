@@ -472,6 +472,12 @@ def format_pages_brief(targets: list[tuple[str, int]]) -> str:
     return ", ".join(str(p) for p in pages)
 
 
+def cited_pages_from_html(html: str, max_pages: int = 10) -> list[int]:
+    rows = extract_citations_data(html or "", top_n=50)
+    pages = sorted({int(r.get("page") or 0) for r in rows if int(r.get("page") or 0) > 0})
+    return pages[:max_pages]
+
+
 def targets_from_state(st: dict[str, Any], base_url: str) -> list[tuple[str, int]]:
     raw = st.get("last_pdf_targets") or []
     out: list[tuple[str, int]] = []
@@ -1411,8 +1417,8 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await deny(update)
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
-    # Fast path: send preprocessed local pages for citation page numbers only
-    targets_state = targets_from_state(st, s.kotaemon_url)
+    # Fast path: send one local PDF built from cited pages
+    cited_pages = cited_pages_from_html(st.get("last_retrieval_html", ""), max_pages=10)
     for sid in st.get("selected_files", []):
         idx = load_storage_index().get("items", {})
         target_item = None
@@ -1422,31 +1428,20 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if needle in aliases:
                 target_item = item
                 break
-        if target_item:
-            aliases = [str(x).strip().lower() for x in target_item.get("aliases", [])]
-            pages = []
-            for src, pg in targets_state:
-                ssrc = str(src).lower()
-                if any(a and a in ssrc for a in aliases):
-                    pages.append(int(pg))
-            pages = sorted(set(pages))
-            if pages:
-                pages_dir = Path(target_item.get("pdf_pages_dir", ""))
-                limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
-                okp, np = build_pdf_from_local_pages(pages_dir, limited, pages, max_pages=10)
-                if okp:
-                    await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
-                    try:
-                        ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
-                        if ok_send:
-                            return
-                    except Exception as e:
-                        log.warning("send combined local pdf failed: %s", e)
-                        for i, p in enumerate(pages[:10], 1):
-                            fp = pages_dir / f"page-{p:04d}.pdf"
-                            if fp.exists():
-                                await send_document_retry(update.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
-                        return
+        if target_item and cited_pages:
+            pages_dir = Path(target_item.get("pdf_pages_dir", ""))
+            limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
+            okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
+            if okp:
+                await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in cited_pages)}")
+                ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                if ok_send:
+                    return
+                for i, p in enumerate(cited_pages[:10], 1):
+                    fp = pages_dir / f"page-{p:04d}.pdf"
+                    if fp.exists():
+                        await send_document_retry(update.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
+                return
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1677,7 +1672,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
-        targets_state = targets_from_state(st, s.kotaemon_url)
+        cited_pages = cited_pages_from_html(st.get("last_retrieval_html", ""), max_pages=10)
         for sid in st.get("selected_files", []):
             idx = load_storage_index().get("items", {})
             target_item = None
@@ -1687,31 +1682,20 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if needle in aliases:
                     target_item = item
                     break
-            if target_item:
-                aliases = [str(x).strip().lower() for x in target_item.get("aliases", [])]
-                pages = []
-                for src, pg in targets_state:
-                    ssrc = str(src).lower()
-                    if any(a and a in ssrc for a in aliases):
-                        pages.append(int(pg))
-                pages = sorted(set(pages))
-                if pages:
-                    pages_dir = Path(target_item.get("pdf_pages_dir", ""))
-                    limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
-                    okp, np = build_pdf_from_local_pages(pages_dir, limited, pages, max_pages=10)
-                    if okp:
-                        await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
-                        try:
-                            ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
-                            if ok_send:
-                                return
-                        except Exception as e:
-                            log.warning("send combined local pdf failed: %s", e)
-                            for i, p in enumerate(pages[:10], 1):
-                                fp = pages_dir / f"page-{p:04d}.pdf"
-                                if fp.exists():
-                                    await send_document_retry(q.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
-                            return
+            if target_item and cited_pages:
+                pages_dir = Path(target_item.get("pdf_pages_dir", ""))
+                limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
+                okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
+                if okp:
+                    await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in cited_pages)}")
+                    ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                    if ok_send:
+                        return
+                    for i, p in enumerate(cited_pages[:10], 1):
+                        fp = pages_dir / f"page-{p:04d}.pdf"
+                        if fp.exists():
+                            await send_document_retry(q.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
+                    return
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
