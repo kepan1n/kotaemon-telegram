@@ -585,6 +585,24 @@ def split_text_chunks(text: str, limit: int = 3500) -> list[str]:
     return chunks
 
 
+async def send_document_retry(msg, path: Path, caption: str | None = None) -> bool:
+    for _ in range(2):
+        try:
+            with path.open("rb") as f:
+                await msg.reply_document(
+                    document=f,
+                    caption=caption,
+                    read_timeout=180,
+                    write_timeout=180,
+                    connect_timeout=30,
+                    pool_timeout=30,
+                )
+            return True
+        except Exception as e:
+            log.warning("reply_document failed: %s", e)
+    return False
+
+
 async def send_citsrc_item(msg, photo_path: Path | None, header: str, snippet: str):
     snippet = (snippet or "").strip()
     short_caption = header if len(header) <= 1000 else header[:1000]
@@ -1417,16 +1435,15 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if okp:
                     await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
                     try:
-                        with limited.open("rb") as f:
-                            await update.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
-                        return
+                        ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                        if ok_send:
+                            return
                     except Exception as e:
                         log.warning("send combined local pdf failed: %s", e)
                         for i, p in enumerate(pages[:10], 1):
                             fp = pages_dir / f"page-{p:04d}.pdf"
                             if fp.exists():
-                                with fp.open("rb") as f:
-                                    await update.message.reply_document(document=f, caption=(f"fallback стр. {p}" if i == 1 else None))
+                                await send_document_retry(update.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
                         return
 
     # Best quality: render original PDF pages from cached metadata
@@ -1449,18 +1466,18 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cookies=b.client.cookies,
         )
         if ok_pdf:
-            with combined.open("rb") as f:
-                await update.message.reply_document(document=f, caption=f"PDF источники: {pages_in_pdf} стр.")
-            return
+            ok_send = await send_document_retry(update.message, combined, caption=f"PDF источники: {pages_in_pdf} стр.")
+            if ok_send:
+                return
 
         # fallback: send individual pages if combined PDF failed
         sent = 0
         for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
             out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
             if out:
-                with out.open("rb") as f:
-                    await update.message.reply_document(document=f, caption=("Sources (fallback pages)" if i == 1 else None))
-                sent += 1
+                ok_send = await send_document_retry(update.message, out, caption=("Sources (fallback pages)" if i == 1 else None))
+                if ok_send:
+                    sent += 1
         if sent:
             return
 
@@ -1683,16 +1700,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if okp:
                         await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
                         try:
-                            with limited.open("rb") as f:
-                                await q.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
-                            return
+                            ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                            if ok_send:
+                                return
                         except Exception as e:
                             log.warning("send combined local pdf failed: %s", e)
                             for i, p in enumerate(pages[:10], 1):
                                 fp = pages_dir / f"page-{p:04d}.pdf"
                                 if fp.exists():
-                                    with fp.open("rb") as f:
-                                        await q.message.reply_document(document=f, caption=(f"fallback стр. {p}" if i == 1 else None))
+                                    await send_document_retry(q.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
                             return
 
         targets = targets_from_state(st, s.kotaemon_url)
@@ -1714,18 +1730,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cookies=b.client.cookies,
             )
             if ok_pdf:
-                with combined.open("rb") as f:
-                    await q.message.reply_document(document=f, caption=f"PDF источники: {pages_in_pdf} стр.")
-                return
+                ok_send = await send_document_retry(q.message, combined, caption=f"PDF источники: {pages_in_pdf} стр.")
+                if ok_send:
+                    return
 
             # fallback: send individual pages if combined PDF failed
             sent = 0
             for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
                 out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
                 if out:
-                    with out.open("rb") as f:
-                        await q.message.reply_document(document=f, caption=("Sources (fallback pages)" if i == 1 else None))
-                    sent += 1
+                    ok_send = await send_document_retry(q.message, out, caption=("Sources (fallback pages)" if i == 1 else None))
+                    if ok_send:
+                        sent += 1
             if sent:
                 return
 
