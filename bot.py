@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from gradio_client import Client
 from PIL import Image, ImageDraw, ImageFont
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -643,6 +644,15 @@ def action_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+async def safe_edit_text(msg, text: str, reply_markup=None):
+    try:
+        return await msg.edit_text(text, reply_markup=reply_markup)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            return None
+        raise
+
+
 def files_keyboard(files: list[dict[str, str]], selected_ids: list[str], page: int = 0, per_page: int = 8) -> InlineKeyboardMarkup:
     total = len(files)
     pages = max(1, (total + per_page - 1) // per_page)
@@ -1029,7 +1039,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if data == "file:clear":
             db.save_user(update.effective_user.id, selected_files=[])
             kb = files_keyboard(files, [], page=0)
-            return await q.message.edit_text(
+            return await safe_edit_text(
+                q.message,
                 f"Файлы: {len(files)}. Выбрано: 0.\nНажимай на файл, чтобы добавить/убрать.",
                 reply_markup=kb,
             )
@@ -1040,7 +1051,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 page = 0
             kb = files_keyboard(files, st["selected_files"], page=page)
-            return await q.message.edit_text(
+            return await safe_edit_text(
+                q.message,
                 f"Файлы: {len(files)}. Выбрано: {len(st['selected_files'])}.\nНажимай на файл, чтобы добавить/убрать.",
                 reply_markup=kb,
             )
@@ -1053,7 +1065,8 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sel.append(file_id)
             db.save_user(update.effective_user.id, selected_files=sel)
             kb = files_keyboard(files, sel, page=0)
-            return await q.message.edit_text(
+            return await safe_edit_text(
+                q.message,
                 f"Файлы: {len(files)}. Выбрано: {len(sel)}.\nНажимай на файл, чтобы добавить/убрать.",
                 reply_markup=kb,
             )
