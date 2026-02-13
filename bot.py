@@ -416,14 +416,29 @@ def parse_pdf_preview_targets(html: str, base_url: str) -> list[tuple[str, int]]
         if src.startswith("/"):
             src = base_url.rstrip("/") + src
         out.append((src, page))
-    # dedupe
-    uniq, seen = [], set()
-    for item in out:
-        if item in seen:
+    return out
+
+
+def prepare_pdf_targets(html: str, base_url: str) -> list[tuple[str, int]]:
+    """Normalize, dedupe and sort PDF targets by page asc (then url)."""
+    raw = parse_pdf_preview_targets(html, base_url)
+    seen: set[tuple[str, int]] = set()
+    uniq: list[tuple[str, int]] = []
+    for src, page in raw:
+        key = ((src or "").strip(), int(page or 1))
+        if not key[0] or key in seen:
             continue
-        seen.add(item)
-        uniq.append(item)
+        seen.add(key)
+        uniq.append(key)
+    uniq.sort(key=lambda x: (x[1], x[0]))
     return uniq
+
+
+def format_pages_brief(targets: list[tuple[str, int]]) -> str:
+    pages = sorted({p for _, p in targets})
+    if not pages:
+        return ""
+    return ", ".join(str(p) for p in pages)
 
 
 def render_pdf_page_png(pdf_url: str, page_num: int, out_file: Path, zoom: float = 2.2) -> bool:
@@ -925,9 +940,13 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
     # Best quality: render original PDF pages from preview metadata
-    targets = parse_pdf_preview_targets(st["last_retrieval_html"], s.kotaemon_url)
+    targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
     out_dir = Path("./out")
     sent = 0
+    if targets:
+        pages_txt = format_pages_brief(targets)
+        if pages_txt:
+            await update.message.reply_text(f"Страницы PDF: {pages_txt}")
     for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
         out = out_dir / f"src_page_{update.effective_user.id}_{i}.png"
         if render_pdf_page_png(pdf_url, page_num, out, zoom=2.6):
@@ -1076,9 +1095,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.message.reply_text(parse_citations_text(st["last_retrieval_html"]))
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
-        targets = parse_pdf_preview_targets(st["last_retrieval_html"], s.kotaemon_url)
+        targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
         out_dir = Path("./out")
         sent = 0
+        if targets:
+            pages_txt = format_pages_brief(targets)
+            if pages_txt:
+                await q.message.reply_text(f"Страницы PDF: {pages_txt}")
         for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
             out = out_dir / f"src_page_{update.effective_user.id}_{i}.png"
             if render_pdf_page_png(pdf_url, page_num, out, zoom=2.6):
