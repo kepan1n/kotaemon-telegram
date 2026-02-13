@@ -538,7 +538,9 @@ def build_pdf_from_local_pages(pages_dir: Path, out_pdf: Path, pages: list[int],
         if added == 0:
             doc.close()
             return False, 0
-        doc.save(str(out_pdf))
+
+        # save optimized (smaller upload, fewer telegram timeouts)
+        doc.save(str(out_pdf), garbage=4, deflate=True, use_objstms=1, linear=True)
         doc.close()
         return True, added
     except Exception as e:
@@ -1445,11 +1447,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                 if ok_send:
                     return
-                for i, p in enumerate(cited_pages[:10], 1):
-                    fp = pages_dir / f"page-{p:04d}.pdf"
-                    if fp.exists():
-                        await send_document_retry(update.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
-                return
+                return await update.message.reply_text("Не удалось отправить единый PDF (таймаут Telegram). Попробуй ещё раз.")
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1703,11 +1701,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                     if ok_send:
                         return
-                    for i, p in enumerate(cited_pages[:10], 1):
-                        fp = pages_dir / f"page-{p:04d}.pdf"
-                        if fp.exists():
-                            await send_document_retry(q.message, fp, caption=(f"fallback стр. {p}" if i == 1 else None))
-                    return
+                    return await q.message.reply_text("Не удалось отправить единый PDF (таймаут Telegram). Попробуй ещё раз.")
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
