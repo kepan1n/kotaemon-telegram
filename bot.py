@@ -1416,9 +1416,18 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 okp, np = build_pdf_from_local_pages(pages_dir, limited, pages, max_pages=10)
                 if okp:
                     await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
-                    with limited.open("rb") as f:
-                        await update.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
-                    return
+                    try:
+                        with limited.open("rb") as f:
+                            await update.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                        return
+                    except Exception as e:
+                        log.warning("send combined local pdf failed: %s", e)
+                        for i, p in enumerate(pages[:10], 1):
+                            fp = pages_dir / f"page-{p:04d}.pdf"
+                            if fp.exists():
+                                with fp.open("rb") as f:
+                                    await update.message.reply_document(document=f, caption=(f"fallback стр. {p}" if i == 1 else None))
+                        return
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1673,9 +1682,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     okp, np = build_pdf_from_local_pages(pages_dir, limited, pages, max_pages=10)
                     if okp:
                         await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in pages)}. Отправляю до {np} стр.")
-                        with limited.open("rb") as f:
-                            await q.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
-                        return
+                        try:
+                            with limited.open("rb") as f:
+                                await q.message.reply_document(document=f, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                            return
+                        except Exception as e:
+                            log.warning("send combined local pdf failed: %s", e)
+                            for i, p in enumerate(pages[:10], 1):
+                                fp = pages_dir / f"page-{p:04d}.pdf"
+                                if fp.exists():
+                                    with fp.open("rb") as f:
+                                        await q.message.reply_document(document=f, caption=(f"fallback стр. {p}" if i == 1 else None))
+                            return
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
