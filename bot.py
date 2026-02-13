@@ -526,6 +526,9 @@ def normalize_pdf_url(base_url: str, value: str) -> str:
     v = (value or "").strip()
     if not v:
         return ""
+    # keep local absolute path as-is if file exists on host
+    if v.startswith("/") and Path(v).exists():
+        return v
     if v.startswith("/"):
         return base_url.rstrip("/") + v
     return v
@@ -588,9 +591,12 @@ def prewarm_pdf_all_pages(pdf_url: str, zoom: float = 2.6, cookies: dict[str, st
     try:
         import fitz  # PyMuPDF
 
-        r = requests.get(pdf_url, timeout=60, cookies=(cookies or {}))
-        r.raise_for_status()
-        doc = fitz.open(stream=r.content, filetype="pdf")
+        if pdf_url.startswith("/") and Path(pdf_url).exists():
+            doc = fitz.open(pdf_url)
+        else:
+            r = requests.get(pdf_url, timeout=60, cookies=(cookies or {}))
+            r.raise_for_status()
+            doc = fitz.open(stream=r.content, filetype="pdf")
 
         total = int(doc.page_count)
         rendered = 0
@@ -619,9 +625,12 @@ def render_pdf_page_png(pdf_url: str, page_num: int, out_file: Path, zoom: float
     try:
         import fitz  # PyMuPDF
 
-        r = requests.get(pdf_url, timeout=45, cookies=(cookies or {}))
-        r.raise_for_status()
-        doc = fitz.open(stream=r.content, filetype="pdf")
+        if pdf_url.startswith("/") and Path(pdf_url).exists():
+            doc = fitz.open(pdf_url)
+        else:
+            r = requests.get(pdf_url, timeout=45, cookies=(cookies or {}))
+            r.raise_for_status()
+            doc = fitz.open(stream=r.content, filetype="pdf")
         idx = min(max(page_num - 1, 0), max(doc.page_count - 1, 0))
         page = doc.load_page(idx)
         mat = fitz.Matrix(zoom, zoom)
@@ -1179,11 +1188,12 @@ async def prepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     arg = " ".join(context.args).strip()
     pdf_url = arg
-    if pdf_url.startswith("/"):
+    if pdf_url.startswith("/") and not Path(pdf_url).exists():
         pdf_url = s.kotaemon_url.rstrip("/") + pdf_url
 
-    if not pdf_url.lower().startswith(("http://", "https://")):
-        return await update.message.reply_text("Нужен прямой URL/путь к PDF (http(s)://... или /path/to/file.pdf)")
+    is_local = pdf_url.startswith("/") and Path(pdf_url).exists()
+    if (not pdf_url.lower().startswith(("http://", "https://"))) and (not is_local):
+        return await update.message.reply_text("Нужен прямой URL/путь к PDF (http(s)://... или локальный /path/to/file.pdf)")
 
     await update.message.reply_text(f"Прогрев всех страниц PDF: {pdf_url}")
     total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6, cookies=b.client.cookies)
