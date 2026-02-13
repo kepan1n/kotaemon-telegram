@@ -1462,6 +1462,9 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Fast path: send one local PDF built from cited pages
     idx = load_storage_index().get("items", {})
     selected_ids = st.get("selected_files", [])
+    if not selected_ids:
+        return await update.message.reply_text("Сначала выбери документ(ы) через /files.")
+    log.info("sources_cmd selected_ids=%s", selected_ids)
     matched_local = False
     for sid in selected_ids:
         target_item = None
@@ -1726,6 +1729,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         idx = load_storage_index().get("items", {})
         selected_ids = st.get("selected_files", [])
+        if not selected_ids:
+            return await q.message.reply_text("Сначала выбери документ(ы) через /files.")
+        log.info("act:src selected_ids=%s", selected_ids)
         matched_local = False
         for sid in selected_ids:
             target_item = None
