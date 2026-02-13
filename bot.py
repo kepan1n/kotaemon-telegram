@@ -180,7 +180,15 @@ class KotaemonBridge:
                     if isinstance(row, (list, tuple)) and len(row) >= 2:
                         fid, name = str(row[0]), str(row[1])
                         if _valid(name, fid):
-                            result.append({"id": fid, "name": name})
+                            item = {"id": fid, "name": name}
+                            for extra in row[2:]:
+                                s = str(extra or "").strip()
+                                if not s:
+                                    continue
+                                if s.lower().endswith(".pdf") or "/files/" in s or s.startswith("http"):
+                                    item["url"] = s
+                                    break
+                            result.append(item)
         except Exception:
             pass
 
@@ -195,7 +203,13 @@ class KotaemonBridge:
                 if isinstance(item, (list, tuple)) and len(item) >= 2:
                     name, fid = str(item[0]), str(item[1])
                     if _valid(name, fid):
-                        result.append({"name": name, "id": fid})
+                        rec = {"name": name, "id": fid}
+                        for extra in item[2:]:
+                            s = str(extra or "").strip()
+                            if s.lower().endswith(".pdf") or "/files/" in s or s.startswith("http"):
+                                rec["url"] = s
+                                break
+                        result.append(rec)
                 elif isinstance(item, str):
                     if _valid(item, item):
                         result.append({"name": item, "id": item})
@@ -440,6 +454,52 @@ def format_pages_brief(targets: list[tuple[str, int]]) -> str:
     if not pages:
         return ""
     return ", ".join(str(p) for p in pages)
+
+
+def normalize_pdf_url(base_url: str, value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        return ""
+    if v.startswith("/"):
+        return base_url.rstrip("/") + v
+    return v
+
+
+def try_resolve_pdf_url_by_id(s: Settings, b: KotaemonBridge, file_id: str) -> str:
+    fid = (file_id or "").strip()
+    if not fid:
+        return ""
+
+    # direct path/url provided instead of id
+    direct = normalize_pdf_url(s.kotaemon_url, fid)
+    if direct.lower().startswith(("http://", "https://")) and direct.lower().endswith(".pdf"):
+        return direct
+
+    files = b.list_files()
+    for f in files:
+        if (f.get("id") or "").strip() != fid:
+            continue
+        u = normalize_pdf_url(s.kotaemon_url, f.get("url", ""))
+        if u.lower().startswith(("http://", "https://")):
+            return u
+        # best-effort fallback by filename
+        n = (f.get("name") or "").strip()
+        if n.lower().endswith(".pdf"):
+            cand = normalize_pdf_url(s.kotaemon_url, f"/files/{n}")
+            return cand
+
+    # last-resort common patterns
+    for pat in (f"/files/{fid}", f"/file/{fid}", f"/api/files/{fid}", f"/api/file/{fid}"):
+        cand = normalize_pdf_url(s.kotaemon_url, pat)
+        try:
+            r = requests.get(cand, timeout=10)
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code == 200 and ("application/pdf" in ct or cand.lower().endswith(".pdf")):
+                return cand
+        except Exception:
+            continue
+
+    return ""
 
 
 def pdf_cache_file(pdf_url: str, page_num: int, zoom: float = 2.6, cache_dir: Path = Path("./out/pdf_cache")) -> Path:
@@ -802,6 +862,7 @@ async def cmd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/deluser <id> — отключить пользователя",
             "/users — ACL список",
             "/prepdf <pdf_url_or_path> — прогреть все страницы PDF в кэш",
+            "/prepdfid <file_id> — прогреть PDF по file_id",
         ]
     await update.message.reply_text("\n".join(base))
 
@@ -1055,6 +1116,32 @@ async def prepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def prepdfid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s: Settings = context.application.bot_data["settings"]
+    db: StateDB = context.application.bot_data["db"]
+    b: KotaemonBridge = context.application.bot_data["bridge"]
+    if not auth_ok(update, s, db):
+        return await deny(update)
+    if not admin_ok(update, s, db):
+        return await update.message.reply_text("Только для админа.")
+
+    if not context.args:
+        return await update.message.reply_text("Использование: /prepdfid <file_id>")
+
+    file_id = " ".join(context.args).strip()
+    pdf_url = try_resolve_pdf_url_by_id(s, b, file_id)
+    if not pdf_url:
+        return await update.message.reply_text("Не смог найти PDF по file_id. Дай прямой путь через /prepdf /path/to/file.pdf")
+
+    await update.message.reply_text(f"Прогрев file_id={file_id}\nPDF: {pdf_url}")
+    total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6)
+    if total <= 0:
+        return await update.message.reply_text("Не удалось открыть PDF по найденной ссылке.")
+    await update.message.reply_text(
+        f"Готово. Всего страниц: {total}. Новых отрисовано: {rendered}. Уже в кэше: {cached}."
+    )
+
+
 async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
@@ -1282,6 +1369,7 @@ def main():
     app.add_handler(CommandHandler("citations", citations_cmd))
     app.add_handler(CommandHandler("sources", sources_cmd))
     app.add_handler(CommandHandler("prepdf", prepdf_cmd))
+    app.add_handler(CommandHandler("prepdfid", prepdfid_cmd))
     app.add_handler(CommandHandler("citsrc", citsrc_cmd))
     app.add_handler(CommandHandler("mindmap", mindmap_cmd))
     app.add_handler(CallbackQueryHandler(callback_router))

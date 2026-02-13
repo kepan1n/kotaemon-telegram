@@ -30,6 +30,7 @@ Telegram-бот для работы с **Kotaemon**: вопросы по док�
 - `/citations` — очищенные цитаты
 - `/sources` — «PDF откуда Инфо»
 - `/prepdf <pdf_url_or_path>` — админ-команда: заранее отрисовать все страницы одного PDF
+- `/prepdfid <file_id>` — админ-команда: прогреть PDF по file_id
 - `/citsrc` — полная цитата + страница PDF
 - `/mindmap` — mindmap
 - `/relogin` — перелогин в Kotaemon
