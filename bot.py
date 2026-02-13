@@ -180,6 +180,16 @@ class KotaemonBridge:
             return False
 
     def list_files(self) -> list[dict[str, str]]:
+        files = self._list_files_once()
+        if files:
+            return files
+        # auto-fallback: refresh session once and retry
+        log.info("list_files empty -> attempting relogin and retry")
+        if self.safe_login():
+            files = self._list_files_once()
+        return files
+
+    def _list_files_once(self) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
 
         def _valid(name: str, fid: str) -> bool:
