@@ -600,8 +600,8 @@ async def send_document_retry(msg, path: Path, caption: str | None = None) -> bo
                 await msg.reply_document(
                     document=f,
                     caption=caption,
-                    read_timeout=180,
-                    write_timeout=180,
+                    read_timeout=None,
+                    write_timeout=None,
                     connect_timeout=30,
                     pool_timeout=30,
                 )
