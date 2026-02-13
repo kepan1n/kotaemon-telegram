@@ -574,21 +574,21 @@ def pdf_cache_file(pdf_url: str, page_num: int, zoom: float = 2.6, cache_dir: Pa
     return cache_dir / f"p{page_num}_{key}.png"
 
 
-def get_or_render_pdf_page_png(pdf_url: str, page_num: int, zoom: float = 2.6) -> Path | None:
+def get_or_render_pdf_page_png(pdf_url: str, page_num: int, zoom: float = 2.6, cookies: dict[str, str] | None = None) -> Path | None:
     out_file = pdf_cache_file(pdf_url, page_num, zoom=zoom)
     if out_file.exists() and out_file.stat().st_size > 0:
         return out_file
-    if render_pdf_page_png(pdf_url, page_num, out_file, zoom=zoom):
+    if render_pdf_page_png(pdf_url, page_num, out_file, zoom=zoom, cookies=cookies):
         return out_file
     return None
 
 
-def prewarm_pdf_all_pages(pdf_url: str, zoom: float = 2.6) -> tuple[int, int, int]:
+def prewarm_pdf_all_pages(pdf_url: str, zoom: float = 2.6, cookies: dict[str, str] | None = None) -> tuple[int, int, int]:
     """Return (total_pages, rendered_new, already_cached)."""
     try:
         import fitz  # PyMuPDF
 
-        r = requests.get(pdf_url, timeout=60)
+        r = requests.get(pdf_url, timeout=60, cookies=(cookies or {}))
         r.raise_for_status()
         doc = fitz.open(stream=r.content, filetype="pdf")
 
@@ -615,11 +615,11 @@ def prewarm_pdf_all_pages(pdf_url: str, zoom: float = 2.6) -> tuple[int, int, in
         return 0, 0, 0
 
 
-def render_pdf_page_png(pdf_url: str, page_num: int, out_file: Path, zoom: float = 2.2) -> bool:
+def render_pdf_page_png(pdf_url: str, page_num: int, out_file: Path, zoom: float = 2.2, cookies: dict[str, str] | None = None) -> bool:
     try:
         import fitz  # PyMuPDF
 
-        r = requests.get(pdf_url, timeout=45)
+        r = requests.get(pdf_url, timeout=45, cookies=(cookies or {}))
         r.raise_for_status()
         doc = fitz.open(stream=r.content, filetype="pdf")
         idx = min(max(page_num - 1, 0), max(doc.page_count - 1, 0))
@@ -1118,6 +1118,7 @@ async def citations_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
+    b: KotaemonBridge = context.application.bot_data["bridge"]
     if not auth_ok(update, s, db):
         return await deny(update)
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
@@ -1134,7 +1135,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if pages_txt:
             await update.message.reply_text(f"Страницы PDF: {pages_txt}")
     for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
-        out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6)
+        out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
         if out:
             with out.open("rb") as f:
                 await update.message.reply_document(document=f, caption=("Sources (PDF pages)" if i == 1 else None))
@@ -1164,6 +1165,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def prepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
+    b: KotaemonBridge = context.application.bot_data["bridge"]
     if not auth_ok(update, s, db):
         return await deny(update)
     if not admin_ok(update, s, db):
@@ -1184,7 +1186,7 @@ async def prepdf_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Нужен прямой URL/путь к PDF (http(s)://... или /path/to/file.pdf)")
 
     await update.message.reply_text(f"Прогрев всех страниц PDF: {pdf_url}")
-    total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6)
+    total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6, cookies=b.client.cookies)
     if total <= 0:
         return await update.message.reply_text("Не удалось открыть PDF. Проверь ссылку/путь и доступность файла.")
 
@@ -1211,7 +1213,7 @@ async def prepdfid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Не смог найти PDF по file_id. Дай прямой путь через /prepdf /path/to/file.pdf")
 
     await update.message.reply_text(f"Прогрев file_id={file_id}\nPDF: {pdf_url}")
-    total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6)
+    total, rendered, cached = prewarm_pdf_all_pages(pdf_url, zoom=2.6, cookies=b.client.cookies)
     if total <= 0:
         return await update.message.reply_text("Не удалось открыть PDF по найденной ссылке.")
     await update.message.reply_text(
@@ -1222,6 +1224,7 @@ async def prepdfid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
+    b: KotaemonBridge = context.application.bot_data["bridge"]
     if not auth_ok(update, s, db):
         return await deny(update)
     st = db.get_user(update.effective_user.id)
@@ -1238,7 +1241,7 @@ async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if src:
             if src.startswith("/"):
                 src = s.kotaemon_url.rstrip("/") + src
-            out = get_or_render_pdf_page_png(src, page, zoom=2.6)
+            out = get_or_render_pdf_page_png(src, page, zoom=2.6, cookies=b.client.cookies)
 
         await send_citsrc_item(update.message, out, header, r.get("snippet", ""))
 
@@ -1281,6 +1284,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await deny(update)
 
     data = q.data or ""
+    b: KotaemonBridge = context.application.bot_data["bridge"]
 
     # file picker callbacks
     if data.startswith("file:"):
@@ -1342,7 +1346,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if pages_txt:
                 await q.message.reply_text(f"Страницы PDF: {pages_txt}")
         for i, (pdf_url, page_num) in enumerate(targets[:6], 1):
-            out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6)
+            out = get_or_render_pdf_page_png(pdf_url, page_num, zoom=2.6, cookies=b.client.cookies)
             if out:
                 with out.open("rb") as f:
                     await q.message.reply_document(document=f, caption=("Sources (PDF pages)" if i == 1 else None))
@@ -1376,7 +1380,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if src:
                 if src.startswith("/"):
                     src = s.kotaemon_url.rstrip("/") + src
-                out = get_or_render_pdf_page_png(src, page, zoom=2.6)
+                out = get_or_render_pdf_page_png(src, page, zoom=2.6, cookies=b.client.cookies)
 
             await send_citsrc_item(q.message, out, header, r.get("snippet", ""))
         return
