@@ -1480,12 +1480,15 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break
         if target_item:
             matched_local = True
+            log.info("sources_cmd local_match sid=%s source=%s", sid, target_item.get("source"))
             cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
+            log.info("sources_cmd cited_pages sid=%s pages=%s", sid, cited_pages)
             if not cited_pages:
                 return await update.message.reply_text("Не нашёл страницы цитат для выбранного файла. Сначала задай вопрос по нему.")
             pages_dir = Path(target_item.get("pdf_pages_dir", ""))
             limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
             okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
+            log.info("sources_cmd local_build sid=%s ok=%s pages=%s out=%s", sid, okp, np, limited)
             if okp:
                 await update.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in cited_pages)}")
                 ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
@@ -1497,6 +1500,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("Не удалось собрать локальный единый PDF из страниц цитат. Запусти /ingest <file_id> заново.")
 
     if selected_ids and not matched_local:
+        log.info("sources_cmd no_local_match selected_ids=%s index_keys=%s", selected_ids, list(idx.keys()))
         return await update.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
 
     # Best quality: render original PDF pages from cached metadata
@@ -1519,6 +1523,7 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cookies=b.client.cookies,
         )
         if ok_pdf:
+            log.info("sources_cmd remote_combined out=%s pages=%s", combined, pages_in_pdf)
             ok_send = await send_document_retry(update.message, combined, caption=f"PDF источники: {pages_in_pdf} стр.")
             if ok_send:
                 return
@@ -1751,12 +1756,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         break
             if target_item:
                 matched_local = True
+                log.info("act:src local_match sid=%s source=%s", sid, target_item.get("source"))
                 cited_pages = cited_pages_for_item(st, target_item, s.kotaemon_url, max_pages=10)
+                log.info("act:src cited_pages sid=%s pages=%s", sid, cited_pages)
                 if not cited_pages:
                     return await q.message.reply_text("Не нашёл страницы цитат для выбранного файла. Сначала задай вопрос по нему.")
                 pages_dir = Path(target_item.get("pdf_pages_dir", ""))
                 limited = Path("./out") / f"sources_local_{update.effective_user.id}_{storage_key(str(sid))}_cited.pdf"
                 okp, np = build_pdf_from_local_pages(pages_dir, limited, cited_pages, max_pages=10)
+                log.info("act:src local_build sid=%s ok=%s pages=%s out=%s", sid, okp, np, limited)
                 if okp:
                     await q.message.reply_text(f"Страницы PDF: {', '.join(str(x) for x in cited_pages)}")
                     ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
@@ -1768,6 +1776,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await q.message.reply_text("Не удалось собрать локальный единый PDF из страниц цитат. Запусти /ingest <file_id> заново.")
 
         if selected_ids and not matched_local:
+            log.info("act:src no_local_match selected_ids=%s index_keys=%s", selected_ids, list(idx.keys()))
             return await q.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
 
         targets = targets_from_state(st, s.kotaemon_url)
@@ -1789,6 +1798,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cookies=b.client.cookies,
             )
             if ok_pdf:
+                log.info("act:src remote_combined out=%s pages=%s", combined, pages_in_pdf)
                 ok_send = await send_document_retry(q.message, combined, caption=f"PDF источники: {pages_in_pdf} стр.")
                 if ok_send:
                     return
