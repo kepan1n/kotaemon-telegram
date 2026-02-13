@@ -1736,7 +1736,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer()
     except BadRequest as e:
         if "Query is too old" not in str(e):
-            raise
+            log.warning("callback answer bad request: %s", e)
+    except Exception as e:
+        log.warning("callback answer failed (ignored): %s", e)
     s: Settings = context.application.bot_data["settings"]
     db: StateDB = context.application.bot_data["db"]
     if not auth_ok(update, s, db):
@@ -1889,8 +1891,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
         idx = load_storage_index().get("items", {})
         selected_ids = st.get("selected_files", [])
+        log.info("act:collage selected_ids=%s", selected_ids)
         if not selected_ids:
             return await q.message.reply_text("Сначала выбери документ(ы) через /files.")
+        await q.message.reply_text("Собираю PNG коллаж…")
 
         for sid in selected_ids:
             target_item = None
@@ -1916,8 +1920,19 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not okc:
                 return await q.message.reply_text("Не удалось собрать коллаж PNG.")
 
-            with collage.open("rb") as f:
-                await q.message.reply_photo(photo=f, caption=f"PNG коллаж по цитатам ({n} стр.)")
+            try:
+                with collage.open("rb") as f:
+                    await q.message.reply_photo(
+                        photo=f,
+                        caption=f"PNG коллаж по цитатам ({n} стр.)",
+                        read_timeout=None,
+                        write_timeout=None,
+                        connect_timeout=30,
+                        pool_timeout=30,
+                    )
+            except Exception as e:
+                log.exception("act:collage send failed: %s", e)
+                return await q.message.reply_text("Не удалось отправить коллаж (таймаут).")
             return
 
         return await q.message.reply_text("Для выбранного файла нет локального индекса. Сделай /ingest <file_id>.")
