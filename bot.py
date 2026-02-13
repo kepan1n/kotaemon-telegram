@@ -50,7 +50,8 @@ class StateDB:
               selected_files_json TEXT NOT NULL DEFAULT '[]',
               last_chat_history_json TEXT NOT NULL DEFAULT '[]',
               last_retrieval_html TEXT NOT NULL DEFAULT '',
-              last_mindmap_json TEXT NOT NULL DEFAULT '{}'
+              last_mindmap_json TEXT NOT NULL DEFAULT '{}',
+              last_pdf_targets_json TEXT NOT NULL DEFAULT '[]'
             )
             """
         )
@@ -65,6 +66,13 @@ class StateDB:
         )
         self.conn.commit()
 
+        # lightweight migration for older DBs
+        try:
+            self.conn.execute("ALTER TABLE user_state ADD COLUMN last_pdf_targets_json TEXT NOT NULL DEFAULT '[]'")
+            self.conn.commit()
+        except Exception:
+            pass
+
         for uid in (bootstrap_admins or set()):
             self.conn.execute(
                 "INSERT OR IGNORE INTO acl_users(tg_user_id, is_admin, enabled) VALUES(?,1,1)",
@@ -74,19 +82,26 @@ class StateDB:
 
     def get_user(self, user_id: int) -> dict[str, Any]:
         cur = self.conn.execute(
-            "SELECT selected_files_json,last_chat_history_json,last_retrieval_html,last_mindmap_json FROM user_state WHERE tg_user_id=?",
+            "SELECT selected_files_json,last_chat_history_json,last_retrieval_html,last_mindmap_json,last_pdf_targets_json FROM user_state WHERE tg_user_id=?",
             (user_id,),
         )
         row = cur.fetchone()
         if not row:
             self.conn.execute("INSERT INTO user_state(tg_user_id) VALUES(?)", (user_id,))
             self.conn.commit()
-            return {"selected_files": [], "last_chat_history": [], "last_retrieval_html": "", "last_mindmap": {}}
+            return {
+                "selected_files": [],
+                "last_chat_history": [],
+                "last_retrieval_html": "",
+                "last_mindmap": {},
+                "last_pdf_targets": [],
+            }
         return {
             "selected_files": json.loads(row[0] or "[]"),
             "last_chat_history": json.loads(row[1] or "[]"),
             "last_retrieval_html": row[2] or "",
             "last_mindmap": json.loads(row[3] or "{}"),
+            "last_pdf_targets": json.loads(row[4] or "[]"),
         }
 
     def save_user(self, user_id: int, **kwargs):
@@ -95,7 +110,7 @@ class StateDB:
         self.conn.execute(
             """
             UPDATE user_state
-            SET selected_files_json=?, last_chat_history_json=?, last_retrieval_html=?, last_mindmap_json=?
+            SET selected_files_json=?, last_chat_history_json=?, last_retrieval_html=?, last_mindmap_json=?, last_pdf_targets_json=?
             WHERE tg_user_id=?
             """,
             (
@@ -103,6 +118,7 @@ class StateDB:
                 json.dumps(current["last_chat_history"], ensure_ascii=False),
                 current["last_retrieval_html"],
                 json.dumps(current["last_mindmap"], ensure_ascii=False),
+                json.dumps(current.get("last_pdf_targets", []), ensure_ascii=False),
                 user_id,
             ),
         )
@@ -454,6 +470,56 @@ def format_pages_brief(targets: list[tuple[str, int]]) -> str:
     if not pages:
         return ""
     return ", ".join(str(p) for p in pages)
+
+
+def targets_from_state(st: dict[str, Any], base_url: str) -> list[tuple[str, int]]:
+    raw = st.get("last_pdf_targets") or []
+    out: list[tuple[str, int]] = []
+    for item in raw:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            src = normalize_pdf_url(base_url, str(item[0]))
+            try:
+                page = max(1, int(item[1]))
+            except Exception:
+                page = 1
+            if src:
+                out.append((src, page))
+    if out:
+        out = sorted(set(out), key=lambda x: (x[1], x[0]))
+    return out
+
+
+def split_text_chunks(text: str, limit: int = 3500) -> list[str]:
+    s = (text or "").strip()
+    if not s:
+        return []
+    chunks: list[str] = []
+    while len(s) > limit:
+        cut = s.rfind("\n", 0, limit)
+        if cut < int(limit * 0.6):
+            cut = s.rfind(" ", 0, limit)
+        if cut < int(limit * 0.6):
+            cut = limit
+        chunks.append(s[:cut].strip())
+        s = s[cut:].strip()
+    if s:
+        chunks.append(s)
+    return chunks
+
+
+async def send_citsrc_item(msg, photo_path: Path | None, header: str, snippet: str):
+    snippet = (snippet or "").strip()
+    short_caption = header if len(header) <= 1000 else header[:1000]
+
+    if photo_path and photo_path.exists():
+        with photo_path.open("rb") as f:
+            await msg.reply_photo(photo=f, caption=short_caption)
+    else:
+        await msg.reply_text(short_caption)
+
+    for idx, part in enumerate(split_text_chunks(snippet, limit=3500), 1):
+        prefix = "Цитата:" if idx == 1 else f"Цитата (часть {idx}):"
+        await msg.reply_text(f"{prefix}\n{part}")
 
 
 def normalize_pdf_url(base_url: str, value: str) -> str:
@@ -1014,7 +1080,14 @@ async def _run_ask(update: Update, context: ContextTypes.DEFAULT_TYPE, q: str):
         log.exception("ask failed: %s", e)
         return await wait_msg.edit_text("Ошибка при запросе к Kotaemon. Попробуй /relogin и повтори вопрос.")
 
-    db.save_user(uid, last_chat_history=hist, last_retrieval_html=retrieval, last_mindmap=mindmap)
+    targets = prepare_pdf_targets(retrieval, context.application.bot_data["settings"].kotaemon_url)
+    db.save_user(
+        uid,
+        last_chat_history=hist,
+        last_retrieval_html=retrieval,
+        last_mindmap=mindmap,
+        last_pdf_targets=targets,
+    )
 
     selected = "Search All" if not st["selected_files"] else "Выбрано file_id: " + ", ".join(st["selected_files"][:5])
     msg = f"{answer}\n\n—\n{selected}"
@@ -1049,8 +1122,12 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await deny(update)
     st = context.application.bot_data["db"].get_user(update.effective_user.id)
 
-    # Best quality: render original PDF pages from preview metadata
-    targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
+    # Best quality: render original PDF pages from cached metadata
+    targets = targets_from_state(st, s.kotaemon_url)
+    if not targets:
+        targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
+        if targets:
+            db.save_user(update.effective_user.id, last_pdf_targets=targets)
     sent = 0
     if targets:
         pages_txt = format_pages_brief(targets)
@@ -1152,26 +1229,18 @@ async def citsrc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not rows:
         return await update.message.reply_text("Нет цитат для связки с источниками.")
 
-    out_dir = Path("./out")
     for i, r in enumerate(rows, 1):
         header = f"{i}) стр. {r['page']} | score {r['score']:g} | {r['doc']}"
-        caption = f"{header}\n\n{r['snippet']}"
-        if len(caption) > 1020:
-            caption = caption[:1020].rstrip() + "…"
 
         src = (r.get("data_src") or "").strip()
         page = int(r.get("page") or 1)
+        out: Path | None = None
         if src:
             if src.startswith("/"):
                 src = s.kotaemon_url.rstrip("/") + src
             out = get_or_render_pdf_page_png(src, page, zoom=2.6)
-            if out:
-                with out.open("rb") as f:
-                    await update.message.reply_photo(photo=f, caption=caption)
-                continue
 
-        # fallback if no page image available
-        await update.message.reply_text(caption)
+        await send_citsrc_item(update.message, out, header, r.get("snippet", ""))
 
 
 async def mindmap_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1262,7 +1331,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.message.reply_text(parse_citations_text(st["last_retrieval_html"]))
     if data == "act:src":
         st = context.application.bot_data["db"].get_user(update.effective_user.id)
-        targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
+        targets = targets_from_state(st, s.kotaemon_url)
+        if not targets:
+            targets = prepare_pdf_targets(st["last_retrieval_html"], s.kotaemon_url)
+            if targets:
+                context.application.bot_data["db"].save_user(update.effective_user.id, last_pdf_targets=targets)
         sent = 0
         if targets:
             pages_txt = format_pages_brief(targets)
@@ -1294,25 +1367,18 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = extract_citations_data(st.get("last_retrieval_html", ""), top_n=5)
         if not rows:
             return await q.message.reply_text("Нет цитат для связки с источниками.")
-        out_dir = Path("./out")
         for i, r in enumerate(rows, 1):
             header = f"{i}) стр. {r['page']} | score {r['score']:g} | {r['doc']}"
-            caption = f"{header}\n\n{r['snippet']}"
-            if len(caption) > 1020:
-                caption = caption[:1020].rstrip() + "…"
 
             src = (r.get("data_src") or "").strip()
             page = int(r.get("page") or 1)
+            out: Path | None = None
             if src:
                 if src.startswith("/"):
                     src = s.kotaemon_url.rstrip("/") + src
                 out = get_or_render_pdf_page_png(src, page, zoom=2.6)
-                if out:
-                    with out.open("rb") as f:
-                        await q.message.reply_photo(photo=f, caption=caption)
-                    continue
 
-            await q.message.reply_text(caption)
+            await send_citsrc_item(q.message, out, header, r.get("snippet", ""))
         return
 
     if data == "act:mm":
