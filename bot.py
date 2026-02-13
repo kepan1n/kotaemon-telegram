@@ -621,6 +621,23 @@ async def send_document_retry(msg, path: Path, caption: str | None = None) -> bo
     return False
 
 
+def schedule_background_pdf_send(msg, path: Path, caption: str):
+    async def _job():
+        ok = await send_document_retry(msg, path, caption=caption)
+        if ok:
+            try:
+                await msg.reply_text("Единый PDF отправлен фоном ✅")
+            except Exception:
+                pass
+        else:
+            try:
+                await msg.reply_text("Не удалось отправить единый PDF даже в фоне (таймаут Telegram).")
+            except Exception:
+                pass
+
+    asyncio.create_task(_job())
+
+
 async def send_citsrc_item(msg, photo_path: Path | None, header: str, snippet: str):
     snippet = (snippet or "").strip()
     short_caption = header if len(header) <= 1000 else header[:1000]
@@ -1447,7 +1464,9 @@ async def sources_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ok_send = await send_document_retry(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                 if ok_send:
                     return
-                return await update.message.reply_text("Не удалось отправить единый PDF (таймаут Telegram). Попробуй ещё раз.")
+                await update.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
+                schedule_background_pdf_send(update.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                return
 
     # Best quality: render original PDF pages from cached metadata
     targets = targets_from_state(st, s.kotaemon_url)
@@ -1701,7 +1720,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ok_send = await send_document_retry(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
                     if ok_send:
                         return
-                    return await q.message.reply_text("Не удалось отправить единый PDF (таймаут Telegram). Попробуй ещё раз.")
+                    await q.message.reply_text("Основная отправка подвисла, запускаю фоновую отправку единого PDF…")
+                    schedule_background_pdf_send(q.message, limited, caption=f"PDF источники (цитируемые стр., {np} шт.)")
+                    return
 
         targets = targets_from_state(st, s.kotaemon_url)
         if not targets:
