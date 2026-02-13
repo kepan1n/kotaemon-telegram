@@ -542,24 +542,36 @@ def build_pdf_from_local_pages(pages_dir: Path, out_pdf: Path, pages: list[int],
         out_pdf.parent.mkdir(parents=True, exist_ok=True)
         doc = fitz.open()
         added = 0
+        png_dir = Path(str(pages_dir).replace("/pdf_pages/", "/png_pages/"))
+
         for p in uniq_pages:
             fp = pages_dir / f"page-{p:04d}.pdf"
-            if not fp.exists():
+            if fp.exists():
+                src = fitz.open(str(fp))
+                doc.insert_pdf(src)
+                src.close()
+                added += 1
                 continue
-            src = fitz.open(str(fp))
-            doc.insert_pdf(src)
-            src.close()
-            added += 1
+
+            # fallback: build page from pre-rendered png
+            ip = png_dir / f"page-{p:04d}.png"
+            if ip.exists():
+                img = fitz.Pixmap(str(ip))
+                page = doc.new_page(width=img.width, height=img.height)
+                page.insert_image(page.rect, filename=str(ip))
+                added += 1
+
         if added == 0:
             doc.close()
+            log.warning("build local citation-pages pdf: no source pages found in %s", pages_dir)
             return False, 0
 
         # save optimized (smaller upload, fewer telegram timeouts)
-        doc.save(str(out_pdf), garbage=4, deflate=True, use_objstms=1, linear=True)
+        doc.save(str(out_pdf), garbage=4, deflate=True, use_objstms=1)
         doc.close()
         return True, added
     except Exception as e:
-        log.warning("build local citation-pages pdf failed: %s", e)
+        log.exception("build local citation-pages pdf failed pages_dir=%s pages=%s err=%s", pages_dir, pages, e)
         return False, 0
 
 
