@@ -693,6 +693,29 @@ async def send_document_retry(msg, path: Path, caption: str | None = None) -> bo
     return False
 
 
+async def send_media_group_retry(msg, media: list[InputMediaPhoto]) -> bool:
+    for attempt in range(1, 3):
+        try:
+            log.info("reply_media_group attempt=%s count=%s", attempt, len(media))
+            await asyncio.wait_for(
+                msg.reply_media_group(
+                    media=media,
+                    read_timeout=None,
+                    write_timeout=None,
+                    connect_timeout=30,
+                    pool_timeout=30,
+                ),
+                timeout=65,
+            )
+            log.info("reply_media_group success attempt=%s", attempt)
+            return True
+        except asyncio.TimeoutError:
+            log.error("reply_media_group local-timeout attempt=%s", attempt)
+        except Exception as e:
+            log.exception("reply_media_group failed attempt=%s err=%s", attempt, e)
+    return False
+
+
 def schedule_background_pdf_send(msg, path: Path, caption: str):
     async def _job():
         ok = await send_document_retry(msg, path, caption=caption)
@@ -1894,7 +1917,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.info("act:collage selected_ids=%s", selected_ids)
         if not selected_ids:
             return await q.message.reply_text("Сначала выбери документ(ы) через /files.")
-        await q.message.reply_text("Собираю PNG коллаж…")
+        await q.message.reply_text("Собираю PNG альбом…")
 
         for sid in selected_ids:
             target_item = None
@@ -1941,13 +1964,9 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     )
 
                 log.info("act:collage send_media_group sid=%s count=%s", sid, len(existing_pngs))
-                await q.message.reply_media_group(
-                    media=media,
-                    read_timeout=None,
-                    write_timeout=None,
-                    connect_timeout=30,
-                    pool_timeout=30,
-                )
+                ok = await send_media_group_retry(q.message, media)
+                if not ok:
+                    return await q.message.reply_text("Не удалось отправить PNG альбом (таймаут).")
                 log.info("act:collage send_media_group success sid=%s", sid)
             except Exception as e:
                 log.exception("act:collage send_media_group failed sid=%s err=%s", sid, e)
