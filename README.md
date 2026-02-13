@@ -10,46 +10,37 @@
 [![Issues](https://img.shields.io/github/issues/kepan1n/kotaemon-telegram)](https://github.com/kepan1n/kotaemon-telegram/issues)
 [![Last commit](https://img.shields.io/github/last-commit/kepan1n/kotaemon-telegram)](https://github.com/kepan1n/kotaemon-telegram/commits/main)
 
-Telegram bot bridge for **Kotaemon** with document-aware Q&A, citations, PDF source pages, and mindmap rendering.
+Telegram bridge for **Kotaemon** with production-focused UX: document selection, clean citations, cited-page PDF delivery, PNG album, ACL, local storage ingest and systemd deploy.
 
-## Features
+## What changed recently
 
-- Inline file picker (`/files`) with multi-select
-- Ask questions (`/ask` or plain text)
-- Clean citations output (`/citations`)
-- Source pages as high-quality PDF renders (`/sources`)
-- Disk cache for rendered PDF pages (faster repeated sends)
-- Pre-warm all found source pages in advance (`/prepdf`)
-- "Citation + PDF" flow with full quote and matching page (`/citsrc`)
-- Mindmap image rendering (`/mindmap`) with pretty renderer + fallback
-- Admin ACL commands: `/adduser`, `/deluser`, `/users`
-- Stable restart helper to avoid duplicate polling processes
+- `/start` now opens file picker immediately (no command wall)
+- Dedicated `/cmd` help command
+- Cited-pages one-file PDF flow (`📄 PDF откуда Инфо`)
+- `🧩 PNG album` action (media-group in one message)
+- `citsrc` sends quote in **image caption** (single message per image)
+- Local storage ingest pipeline (`/ingest`) with persistent page artifacts
+- Better Telegram timeout handling, retries, and verbose diagnostics
+- Optional HTTP proxy via systemd drop-in
 
-## Commands
+## Architecture (high-level)
 
-- `/start` — greeting + immediate file picker
-- `/cmd` — full command help
-- `/files` — inline file picker
-- `/use <name|id>` — select file by name or id
-- `/clearuse` — clear selected files
-- `/selected` — show selected file ids
-- `/ask <question>` — ask Kotaemon
-- `/citations` — cleaned citations
-- `/sources` — "PDF where info comes from"
-- `/prepdf <pdf_url_or_path>` — admin-only pre-render of all pages for one PDF
-- `/prepdfid <file_id>` — admin-only pre-render by Kotaemon file_id
-- `/ingest [file_id|name|path]` — admin-only local storage ingest (or ingest all from `storage/incoming`)
-- Inline `🧩 PNG album` action: sends cited PNG pages as one Telegram media-group message
-- `/citsrc` — full citation + matched PDF page
-- `/mindmap` — mindmap image
-- `/relogin` — relogin to Kotaemon
+```mermaid
+flowchart LR
+  TG[Telegram User] --> BOT[Kotaemon Telegram Bridge]
+  BOT --> KOT[Kotaemon / Gradio API]
+  BOT --> DB[(SQLite state.db\nACL + user state)]
+  BOT --> ST[(storage/\nincoming + rendered pages + bundles)]
 
-Admin:
-- `/adduser <telegram_id>`
-- `/deluser <telegram_id>`
-- `/users`
+  ST --> PDF[One-file cited PDF]
+  ST --> PNG[PNG album by cited pages]
 
-## Quick start (local)
+  BOT -->|sendDocument / sendMediaGroup| TG
+```
+
+## Quickstart
+
+### 1) Local run
 
 ```bash
 python3 -m venv .venv
@@ -60,20 +51,51 @@ cp .env.example .env
 python bot.py
 ```
 
-## Ubuntu Server deploy (systemd)
+### 2) Server deploy (Ubuntu + systemd)
 
 ```bash
 chmod +x deploy.sh
 ./deploy.sh <linux-user>
 ```
 
-The deploy script installs OS deps for Playwright, creates venv, installs Chromium, writes systemd unit, enables and restarts service.
-
-Logs:
+Service logs:
 
 ```bash
 journalctl -u kotaemon-telegram-bridge -f
 ```
+
+### 3) First Telegram flow
+
+1. `/start`
+2. Select files in `/files`
+3. Ask a question (`/ask ...` or plain text)
+4. Use inline actions:
+   - `📄 PDF откуда Инфо` — one-file cited-pages PDF
+   - `🧩 PNG альбом` — cited PNG pages as one album
+   - `📎 Цитаты + PDF` — quote + matching page image
+
+## Commands
+
+- `/start` — greeting + immediate file picker
+- `/cmd` — full command help
+- `/files` — inline file picker
+- `/use <name|id>` — select file by name/id
+- `/clearuse` — clear selected files
+- `/selected` — show selected file ids
+- `/ask <question>` — ask Kotaemon
+- `/citations` — cleaned citations
+- `/sources` — cited-pages PDF sources flow
+- `/citsrc` — citation + matching page image
+- `/mindmap` — mindmap image
+- `/relogin` — relogin to Kotaemon
+
+Admin:
+- `/adduser <telegram_id>`
+- `/deluser <telegram_id>`
+- `/users`
+- `/prepdf <pdf_url_or_path>`
+- `/prepdfid <file_id>`
+- `/ingest [file_id|name|path]`
 
 ## Local storage mode (fastest)
 
@@ -89,11 +111,13 @@ Generated artifacts:
 - `storage/rendered/png_pages/<key>/page-XXXX.png`
 - `storage/rendered/bundles/<key>.pdf`
 
-When a selected file has a local bundle, the PDF button sends it directly from storage.
+How it works:
+- bot resolves selected `file_id` against local index
+- extracts cited pages
+- builds one compact PDF from cited pages (up to 10)
+- sends one file (with background retry fallback)
 
 ## Proxy (optional, systemd drop-in)
-
-If Telegram is unstable without proxy, configure HTTP proxy via systemd drop-in:
 
 `/etc/systemd/system/kotaemon-telegram-bridge.service.d/proxy.conf`
 
@@ -104,7 +128,7 @@ Environment="HTTPS_PROXY=http://127.0.0.1:7080"
 Environment="NO_PROXY=localhost,127.0.0.1,1chat.legenda-group.ru,.legenda-group.ru"
 ```
 
-Then apply:
+Apply:
 
 ```bash
 sudo systemctl daemon-reload

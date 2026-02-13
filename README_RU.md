@@ -3,46 +3,35 @@
 [![English](https://img.shields.io/badge/README-English-blue)](README.md)
 [![Русский](https://img.shields.io/badge/README-Русский-brightgreen)](README_RU.md)
 
-Telegram-бот для работы с **Kotaemon**: вопросы по документам, цитаты, страницы PDF-источников и mindmap.
+Telegram-bridge для **Kotaemon** с удобным Telegram UX: выбор документов, чистые цитаты, единый PDF по цитируемым страницам, PNG-альбом, ACL, локальный ingest и systemd-деплой.
 
-## Возможности
+## Что добавлено/улучшено
 
-- Inline-выбор документов (`/files`) с галочками
-- Вопросы к документам (`/ask` или обычный текст)
-- Очищенный вывод цитат (`/citations`)
-- Источники как страницы PDF хорошего качества (`/sources`)
-- Дисковый кэш отрисованных PDF-страниц (повторная выдача быстрее)
-- Прогрев всех найденных страниц заранее (`/prepdf`)
-- Режим "полная цитата + страница PDF" (`/citsrc`)
-- Mindmap картинкой (`/mindmap`), красивый рендер + fallback
-- ACL для пользователей: `/adduser`, `/deluser`, `/users`
-- Скрипт безопасного перезапуска без дублей процессов
+- `/start` сразу показывает выбор файлов
+- Справка вынесена в `/cmd`
+- `📄 PDF откуда Инфо` — единый PDF по страницам цитат
+- `🧩 PNG альбом` — все PNG-страницы одним media-group сообщением
+- `📎 Цитаты + PDF` — цитата подписью к изображению
+- Локальный ingest (`/ingest`) и персистентное хранилище страниц
+- Улучшены retry/timeout и диагностические логи
+- Опциональная работа через HTTP proxy (systemd drop-in)
 
-## Команды
+## Диаграмма (упрощённо)
 
-- `/start` — приветствие + сразу выбор файлов
-- `/cmd` — список команд
-- `/files` — inline-пикер файлов
-- `/use <имя|id>` — выбрать файл по имени/id
-- `/clearuse` — очистить выбор
-- `/selected` — показать выбранные file_id
-- `/ask <вопрос>` — задать вопрос
-- `/citations` — очищенные цитаты
-- `/sources` — «PDF откуда Инфо»
-- `/prepdf <pdf_url_or_path>` — админ-команда: заранее отрисовать все страницы одного PDF
-- `/prepdfid <file_id>` — админ-команда: прогреть PDF по file_id
-- `/ingest [file_id|name|path]` — админ-команда: локальная предобработка (или всего `storage/incoming`)
-- Inline-кнопка `🧩 PNG альбом`: отправка PNG-страниц по цитатам одним media-group сообщением
-- `/citsrc` — полная цитата + страница PDF
-- `/mindmap` — mindmap
-- `/relogin` — перелогин в Kotaemon
+```mermaid
+flowchart LR
+  U[Пользователь в Telegram] --> B[Бот-bridge]
+  B --> K[Kotaemon API]
+  B --> S[(state.db + ACL)]
+  B --> L[(storage/\nincoming + rendered pages + bundles)]
+  L --> P[Единый PDF по цитатам]
+  L --> A[PNG альбом]
+  B --> U
+```
 
-Админ:
-- `/adduser <telegram_id>`
-- `/deluser <telegram_id>`
-- `/users`
+## Quickstart
 
-## Локальный запуск
+### 1) Локальный запуск
 
 ```bash
 python3 -m venv .venv
@@ -53,7 +42,7 @@ cp .env.example .env
 python bot.py
 ```
 
-## Деплой на Ubuntu Server (systemd)
+### 2) Деплой на Ubuntu Server
 
 ```bash
 chmod +x deploy.sh
@@ -66,25 +55,60 @@ chmod +x deploy.sh
 journalctl -u kotaemon-telegram-bridge -f
 ```
 
+### 3) Базовый сценарий в Telegram
+
+1. `/start`
+2. Выбрать документы (`/files`)
+3. Задать вопрос (`/ask ...` или обычный текст)
+4. Использовать inline-кнопки:
+   - `📄 PDF откуда Инфо`
+   - `🧩 PNG альбом`
+   - `📎 Цитаты + PDF`
+
+## Команды
+
+- `/start` — приветствие + выбор файлов
+- `/cmd` — список команд
+- `/files` — inline-пикер файлов
+- `/use <name|id>` — выбрать файл
+- `/clearuse` — очистить выбор
+- `/selected` — показать выбранные file_id
+- `/ask <question>` — вопрос в Kotaemon
+- `/citations` — очищенные цитаты
+- `/sources` — поток источников (PDF по цитатам)
+- `/citsrc` — цитата + соответствующая страница
+- `/mindmap` — mindmap
+- `/relogin` — relogin в Kotaemon
+
+Админ:
+- `/adduser <telegram_id>`
+- `/deluser <telegram_id>`
+- `/users`
+- `/prepdf <pdf_url_or_path>`
+- `/prepdfid <file_id>`
+- `/ingest [file_id|name|path]`
+
 ## Локальное хранилище (самый быстрый режим)
 
 Клади PDF в:
 - `storage/incoming/<file_id>.pdf` или `storage/incoming/<name>.pdf`
 
-Далее (админ):
-- `/ingest <file_id|name|path>` — обработать один файл
-- `/ingest` — обработать все PDF в `storage/incoming`
+Команды:
+- `/ingest <file_id|name|path>` — обработать один PDF
+- `/ingest` — обработать все PDF из `storage/incoming`
 
-Будут созданы:
+Артефакты:
 - `storage/rendered/pdf_pages/<key>/page-XXXX.pdf`
 - `storage/rendered/png_pages/<key>/page-XXXX.png`
 - `storage/rendered/bundles/<key>.pdf`
 
-Если для выбранного файла есть локальный bundle, кнопка PDF отправляет его сразу.
+Как работает:
+- бот сопоставляет выбранный `file_id` с локальным индексом,
+- находит страницы цитат,
+- собирает единый компактный PDF (до 10 страниц),
+- отправляет одним файлом.
 
 ## Прокси (опционально, systemd drop-in)
-
-Если Telegram работает нестабильно без прокси, добавьте HTTP-прокси через drop-in:
 
 `/etc/systemd/system/kotaemon-telegram-bridge.service.d/proxy.conf`
 
