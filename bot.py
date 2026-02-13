@@ -735,17 +735,15 @@ def schedule_background_pdf_send(msg, path: Path, caption: str):
 
 async def send_citsrc_item(msg, photo_path: Path | None, header: str, snippet: str):
     snippet = (snippet or "").strip()
-    short_caption = header if len(header) <= 1000 else header[:1000]
+    caption = f"{header}\n\n{snippet}".strip()
+    if len(caption) > 1024:
+        caption = caption[:1021].rstrip() + "..."
 
     if photo_path and photo_path.exists():
         with photo_path.open("rb") as f:
-            await msg.reply_photo(photo=f, caption=short_caption)
+            await msg.reply_photo(photo=f, caption=caption)
     else:
-        await msg.reply_text(short_caption)
-
-    for idx, part in enumerate(split_text_chunks(snippet, limit=3500), 1):
-        prefix = "Цитата:" if idx == 1 else f"Цитата (часть {idx}):"
-        await msg.reply_text(f"{prefix}\n{part}")
+        await msg.reply_text(caption)
 
 
 def normalize_pdf_url(base_url: str, value: str) -> str:
