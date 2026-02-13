@@ -163,6 +163,12 @@ class KotaemonBridge:
     def list_files(self) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
 
+        def _valid(name: str, fid: str) -> bool:
+            n = (name or "").strip()
+            f = (fid or "").strip()
+            bad = {"", "-", "none", "null"}
+            return n.lower() not in bad and f.lower() not in bad
+
         # Primary source: dataframe endpoint with stable [id, name, ...]
         try:
             df = self.client.predict(api_name="/list_file")
@@ -170,7 +176,9 @@ class KotaemonBridge:
                 rows = df.get("data") or []
                 for row in rows:
                     if isinstance(row, (list, tuple)) and len(row) >= 2:
-                        result.append({"id": str(row[0]), "name": str(row[1])})
+                        fid, name = str(row[0]), str(row[1])
+                        if _valid(name, fid):
+                            result.append({"id": fid, "name": name})
         except Exception:
             pass
 
@@ -183,16 +191,23 @@ class KotaemonBridge:
             choices = out.get("choices") or []
             for item in choices:
                 if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    result.append({"name": str(item[0]), "id": str(item[1])})
+                    name, fid = str(item[0]), str(item[1])
+                    if _valid(name, fid):
+                        result.append({"name": name, "id": fid})
                 elif isinstance(item, str):
-                    result.append({"name": item, "id": item})
+                    if _valid(item, item):
+                        result.append({"name": item, "id": item})
             return result
         if isinstance(out, list):
             for item in out:
                 if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    result.append({"name": str(item[0]), "id": str(item[1])})
+                    name, fid = str(item[0]), str(item[1])
+                    if _valid(name, fid):
+                        result.append({"name": name, "id": fid})
                 else:
-                    result.append({"name": str(item), "id": str(item)})
+                    s = str(item)
+                    if _valid(s, s):
+                        result.append({"name": s, "id": s})
         return result
 
     def ask(self, text: str, selected_files: list[str], history: list):
