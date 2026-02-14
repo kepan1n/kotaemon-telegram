@@ -1046,7 +1046,7 @@ def get_settings() -> Settings:
     wl = {int(x.strip()) for x in os.getenv("TELEGRAM_WHITELIST", "").split(",") if x.strip()}
     return Settings(
         token=token,
-        kotaemon_url=os.getenv("KOTAEMON_URL", "https://1chat.legenda-group.ru").strip(),
+        kotaemon_url=os.getenv("KOTAEMON_URL", "https://kotaemon.example.com").strip(),
         kotaemon_user=os.getenv("KOTAEMON_USERNAME", "admin").strip(),
         kotaemon_pass=os.getenv("KOTAEMON_PASSWORD", "admin").strip(),
         whitelist=wl,

@@ -125,7 +125,7 @@ How it works:
 [Service]
 Environment="HTTP_PROXY=http://127.0.0.1:7080"
 Environment="HTTPS_PROXY=http://127.0.0.1:7080"
-Environment="NO_PROXY=localhost,127.0.0.1,1chat.legenda-group.ru,.legenda-group.ru"
+Environment="NO_PROXY=localhost,127.0.0.1,kotaemon.example.com,.example.com"
 ```
 
 Apply:
